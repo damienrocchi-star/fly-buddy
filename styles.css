@@ -81,7 +81,7 @@ button, .btn {
 .chip { padding: 9px 14px; min-height: 42px; border-radius: 999px; background: var(--chip); font-size: 15px; }
 .chip.on { background: var(--chip-on); color: var(--brand-ink); font-weight: 700; }
 label.field { display: block; font-weight: 600; margin-top: 6px; }
-input[type=number], input[type=text], select, textarea {
+input[type=number], input[type=text], input[type=search], select, textarea {
   font: inherit; width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--bg); color: var(--ink); min-height: 46px;
 }

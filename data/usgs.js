@@ -26,7 +26,8 @@ export function distanceMi(lat1, lon1, lat2, lon2) {
 function tidyName(n) {
   // USGS names are often SHOUTY. Make them readable.
   if (n === n.toUpperCase()) n = n.toLowerCase().replace(/\b\w/g, (ch) => ch.toUpperCase());
-  return n.replace(/\b(Nr|Near)\b/i, 'near').replace(/\b([A-Z][a-z])$/, (m) => m.toUpperCase());
+  return n.replace(/\b(Nr|nr|Near)\b/g, 'near').replace(/\b(At|Below|Above|Bl|Ab)\b/g, (w) => w.toLowerCase())
+    .replace(/\b([A-Z][a-z])$/, (m) => m.toUpperCase());
 }
 
 // Group NWIS timeSeries by site.
@@ -118,6 +119,62 @@ function parseOGC(json) {
   const list = Object.values(sites);
   list.forEach(summarize);
   return list;
+}
+
+const LOCATIONS = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/monitoring-locations/items';
+const GEOCODE = 'https://geocoding-api.open-meteo.com/v1/search';
+const SKIP_WORDS = new Set(['RIVER', 'R', 'THE', 'AT', 'NEAR', 'NR', 'OF']);
+const STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
+
+// Search by river or place name, anywhere in the US. Returns only gauges reporting live data.
+// 1) Match gauge names ("pere marquette", "madison mt").  2) If none, treat it as a town and list gauges nearby.
+export async function searchByName(query) {
+  const raw = query.toUpperCase().replace(/[^A-Z0-9 ,]/g, ' ');
+  let words = raw.replace(/,/g, ' ').split(/\s+/).filter((w) => w && !SKIP_WORDS.has(w));
+  // A trailing state code ("... MT") narrows the search to that state.
+  let state = null;
+  if (words.length > 1 && STATES[words[words.length - 1]]) state = words.pop();
+  if (words.length) {
+    // Gauge names are stored in mixed case ("PERE MARQUETTE", "Madison River"), so match case-insensitively.
+    const conds = ["site_type_code='ST'", ...words.map((w) => `CASEI(monitoring_location_name) LIKE CASEI('%${w.replace(/'/g, '')}%')`)];
+    if (state) conds.push(`state_name='${STATES[state]}'`);
+    const url = `${LOCATIONS}?f=json&limit=500&properties=monitoring_location_name,state_name&filter=${encodeURIComponent(conds.join(' AND '))}&filter-lang=cql2-text`;
+    const json = await getJSON(url, 30000);
+    const ids = (json.features || []).map((f) => f.id.replace(/^USGS-/, ''));
+    const live = await liveSites(ids);
+    if (live.length) return { kind: 'name', sites: live.sort((a, b) => a.name.localeCompare(b.name)) };
+  }
+  // Fall back to a place name.
+  const place = await geocode(query);
+  if (!place) return { kind: 'none', sites: [] };
+  const sites = await findNearby(place.lat, place.lon);
+  return { kind: 'place', place: place.label, sites };
+}
+
+// Which of these gauges are reporting right now (with their latest readings).
+async function liveSites(ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100).join(',');
+    if (!batch) break;
+    try {
+      const json = await getJSON(`${IV}?format=json&sites=${batch}&parameterCd=${P_FLOW},${P_TEMP}&siteStatus=active&period=PT3H`, 30000);
+      out.push(...parseIV(json).filter((s) => s.cfs != null || s.waterTempF != null));
+    } catch (e) { /* no live sites in this batch (USGS returns an error) */ }
+  }
+  return out;
+}
+
+async function geocode(query) {
+  const parts = query.split(',').map((s) => s.trim()).filter(Boolean);
+  let name = parts[0], st = parts[1] ? parts[1].toUpperCase() : null;
+  const m = /^(.*\S)\s+([A-Za-z]{2})$/.exec(name);
+  if (!st && m && STATES[m[2].toUpperCase()]) { name = m[1]; st = m[2].toUpperCase(); }
+  const json = await getJSON(`${GEOCODE}?name=${encodeURIComponent(name)}&count=10&countryCode=US&language=en&format=json`);
+  let res = json.results || [];
+  if (st) res = res.filter((r) => r.admin1 === (STATES[st] || st) || (r.admin1 || '').toUpperCase() === st);
+  const r = res[0];
+  return r ? { lat: r.latitude, lon: r.longitude, label: `${r.name}, ${r.admin1}` } : null;
 }
 
 // Full detail for one gauge (last 24h, for trend).

@@ -1,6 +1,6 @@
 // Offline support: keep a copy of the app on the phone.
 // Serves the saved copy instantly, and refreshes it in the background when there's signal.
-const CACHE = 'fly-buddy-v1';
+const CACHE = 'fly-buddy-v2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'store.js', 'manifest.json',
   'data/usgs.js', 'data/weather.js', 'engine/recommend.js', 'engine/rigging.js',

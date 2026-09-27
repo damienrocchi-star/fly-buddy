@@ -1,6 +1,6 @@
 // Fly Buddy: screens, state and glue. No build step, no API keys.
 import * as store from './store.js';
-import { findNearby, getSite, getFlowStats, flowBand, distanceMi } from './data/usgs.js';
+import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi } from './data/usgs.js';
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
 import { recommend, regionFor } from './engine/recommend.js';
 
@@ -99,7 +99,7 @@ async function selectSite(basic) {
 }
 
 async function findNearMe() {
-  S.loading = 'Finding your location…'; S.nearby = null; render();
+  S.loading = 'Finding your location…'; S.nearby = null; S.nearbyTitle = ''; render();
   try {
     S.gps = await gps();
   } catch (e) {
@@ -114,6 +114,21 @@ async function findNearMe() {
     S.nearby = S.favorites.map((f) => ({ ...f, dist: distanceMi(S.gps.lat, S.gps.lon, f.lat, f.lon), cachedOnly: true }))
       .sort((a, b) => a.dist - b.dist);
     toast('No signal. Showing your saved rivers.');
+  }
+  S.loading = ''; render();
+}
+
+async function searchRivers(q) {
+  q = q.trim();
+  if (q.length < 3) { toast('Type at least 3 letters.'); return; }
+  S.query = q; S.nearby = null; S.nearbyTitle = ''; S.loading = `Searching for "${q}"…`; render();
+  try {
+    const r = await searchByName(q);
+    S.nearby = r.sites;
+    S.nearbyTitle = r.kind === 'place' ? `Gauges near ${r.place}` : `Live gauges matching "${q}"`;
+  } catch (e) {
+    S.nearby = []; S.nearbyTitle = `"${q}"`;
+    toast(navigator.onLine ? 'Search failed. Try again in a moment.' : 'Search needs signal. Your saved rivers still work offline.');
   }
   S.loading = ''; render();
 }
@@ -183,14 +198,19 @@ function viewWater() {
 
   // Where
   h += `<div class="card"><h2>Where are you fishing?</h2>
+    <form class="inline" data-act="search" style="margin-bottom:10px">
+      <input type="search" id="q" enterkeyhint="search" placeholder="River or town, e.g. Pere Marquette" value="${esc(S.query || '')}" autocomplete="off">
+      <button type="submit" style="flex:none">Search</button>
+    </form>
     <div class="btn-row">
       <button class="btn-primary" data-act="near">📍 Find gauges near me</button>
     </div>
     <p class="small muted" style="margin:8px 0 0">No gauge on your river? <button class="linkish" data-act="manual">Enter conditions yourself</button></p>`;
   if (S.nearby) {
+    if (S.nearbyTitle) h += `<h3>${esc(S.nearbyTitle)}</h3>`;
     h += S.nearby.length ? `<ul class="site-list">${S.nearby.map((s, k) => `<li><button data-act="pick" data-k="${k}">
       <span><span class="nm">${esc(s.name)}</span><br><span class="small muted">${s.cachedOnly ? 'saved offline' : [s.cfs != null ? `${Math.round(s.cfs).toLocaleString()} cfs` : '', s.waterTempF != null ? `${s.waterTempF}°F` : ''].filter(Boolean).join(' · ')}</span></span>
-      <span class="meta">${s.dist.toFixed(1)} mi</span></button></li>`).join('')}</ul>` : '<p class="muted">No gauges found nearby.</p>';
+      <span class="meta">${s.dist != null ? `${s.dist.toFixed(1)} mi` : '›'}</span></button></li>`).join('')}</ul>` : `<p class="muted">${S.nearbyTitle ? 'No live gauges found. Try a shorter name (e.g. "Pere Marquette"), or a nearby town like "Baldwin, MI".' : 'No gauges found nearby.'}</p>`;
   }
   if (S.favorites.length) {
     h += `<h3>★ Saved rivers</h3><ul class="site-list">${S.favorites.map((f, k) =>
@@ -218,7 +238,7 @@ function viewWater() {
     </div>`;
   }
   if (!S.site && !S.manual && !S.nearby && !S.loading) {
-    h += `<div class="card"><p class="muted" style="margin:0">Tap <b>Find gauges near me</b> on the river. You'll get live flow and water temp from the nearest USGS gauge, plus weather, then the best flies and rig for right now.</p></div>`;
+    h += `<div class="card"><p class="muted" style="margin:0">Search any US river by name, or tap <b>Find gauges near me</b> when you're on the water. You'll get live flow and water temp from the nearest USGS gauge, plus weather, then the best flies and rig for right now.</p></div>`;
   }
   return h;
 }
@@ -471,6 +491,14 @@ $app.addEventListener('click', async (e) => {
     a.href = URL.createObjectURL(blob); a.download = `fly-buddy-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
+});
+
+$app.addEventListener('submit', (e) => {
+  if (e.target.dataset.act !== 'search') return;
+  e.preventDefault();
+  const q = document.getElementById('q');
+  q.blur(); // close the phone keyboard
+  searchRivers(q.value);
 });
 
 $app.addEventListener('input', (e) => {
