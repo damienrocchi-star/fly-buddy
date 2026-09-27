@@ -1,15 +1,20 @@
 // Offline support: keep a copy of the app on the phone.
-// Serves the saved copy instantly, and refreshes it in the background when there's signal.
-const CACHE = 'fly-buddy-v2';
+// With signal, always load the latest version (so updates show up straight away).
+// Offline or on a very slow connection, use the saved copy.
+const CACHE = 'fly-buddy-v3';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'store.js', 'manifest.json',
   'data/usgs.js', 'data/weather.js', 'engine/recommend.js', 'engine/rigging.js',
   'knowledge/hatches.json', 'knowledge/flies.json', 'knowledge/steelhead.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-180.png',
 ];
+const NETWORK_WAIT_MS = 4000;
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache so we save the newest files.
+  e.waitUntil(caches.open(CACHE)
+    .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -22,13 +27,21 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   // Only handle our own files; river and weather data are saved by the app itself.
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
-  e.respondWith(caches.open(CACHE).then(async (cache) => {
-    const hit = await cache.match(req, { ignoreSearch: true });
-    const fresh = fetch(req).then((res) => {
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    // (A page-navigation Request can't be re-fetched with options, so use its URL.)
+    const network = fetch(req.mode === 'navigate' ? req.url : req, { cache: 'no-cache' }).then((res) => {
       if (res.ok) cache.put(req, res.clone());
       return res;
-    }).catch(() => null);
-    if (hit) { e.waitUntil(fresh); return hit; }
-    return (await fresh) || (req.mode === 'navigate' ? cache.match('index.html') : Response.error());
-  }));
+    });
+    const timeout = new Promise((resolve) => setTimeout(resolve, NETWORK_WAIT_MS, null));
+    try {
+      const res = await Promise.race([network, timeout]);
+      if (res) return res;
+    } catch (err) { /* offline */ }
+    const hit = await cache.match(req, { ignoreSearch: true })
+      || (req.mode === 'navigate' ? await cache.match('index.html') : null);
+    if (hit) { e.waitUntil(network.catch(() => {})); return hit; }
+    return network; // nothing saved yet; wait for the network
+  })());
 });

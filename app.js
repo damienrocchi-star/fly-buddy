@@ -4,6 +4,7 @@ import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi }
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
 import { recommend, regionFor } from './engine/recommend.js';
 
+const APP_VERSION = '3'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -75,8 +76,13 @@ async function selectSite(basic) {
   const id = basic.id;
   try {
     const d = await getSite(id);
-    S.site = { ...basic, ...d, name: basic.name || d.name, fetchedAt: Date.now() };
+    const codeName = (n) => !n || /^USGS( gauge)? \d+$/.test(n);
+    const name = codeName(basic.name) ? d.name : basic.name;
+    S.site = { ...basic, ...d, name, fetchedAt: Date.now() };
     store.set(`site:${id}`, S.site);
+    // Older versions saved some rivers under their gauge number; fix the name.
+    const fav = S.favorites.find((f) => f.id === id);
+    if (fav && fav.name !== name && !codeName(name)) { fav.name = name; store.set('favorites', S.favorites); }
   } catch (e) {
     const cached = await store.get(`site:${id}`);
     if (cached) { S.site = cached; S.offline = true; } else S.loadError = 'Could not reach the gauge, and there is no saved copy.';
@@ -429,7 +435,7 @@ function viewGear() {
     <p class="small muted" style="margin-top:0">One fly per line, e.g. "Pheasant Tail" or "Zebra Midge". Flies you have get a ✓ in setups.</p>
     <textarea id="flybox">${esc(g.flies.join('\n'))}</textarea>
     <p style="margin:10px 0 0"><button style="width:100%" data-act="saveflies">Save fly box</button></p></div>
-  <div class="card small muted">Fly Buddy uses free public data: USGS river gauges and Open-Meteo weather. All advice comes from built-in rules, with no paid services. Your data stays on this phone.</div>`;
+  <div class="card small muted">Fly Buddy uses free public data: USGS river gauges and Open-Meteo weather. All advice comes from built-in rules, with no paid services. Your data stays on this phone.<br><br>App version ${APP_VERSION}</div>`;
 }
 
 // ---------- events ----------
