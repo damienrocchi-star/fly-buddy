@@ -1,0 +1,18 @@
+{
+  "_about": "General-purpose trout flies used when no specific hatch is on. Grouped by water clarity. Edit freely.",
+  "nymphs": {
+    "clear": ["Pheasant Tail #16-18", "Perdigon (olive/black) #16-18", "Frenchie #16", "Zebra Midge #18-20"],
+    "slight": ["Hare's Ear #14-16", "Frenchie #14-16", "Pheasant Tail #16", "Prince Nymph #14"],
+    "stained": ["Pat's Rubber Legs #8-10", "Squirmy Worm (pink/red) #10-12", "Egg (orange/pink) #14", "Hare's Ear #12-14"],
+    "muddy": ["Squirmy Worm (red/pink/purple) #10", "Egg (chartreuse/orange) #12-14", "Pat's Rubber Legs (black) #6-8"]
+  },
+  "winter_nymphs": ["Zebra Midge #18-22", "Egg (peach/orange) #14-16", "Pheasant Tail #18", "Rainbow Warrior #18", "San Juan Worm #12-14"],
+  "attractor_dries": ["Parachute Adams #14-18", "Stimulator #12-14", "Chubby Chernobyl #8-10", "Royal Wulff #12-14"],
+  "streamers": {
+    "clear": ["Slump Buster (natural/olive) #6-8", "Woolly Bugger (olive/brown) #8", "Sculpzilla (olive) #6", "Clouser Minnow (natural) #6"],
+    "slight": ["Woolly Bugger (olive/black) #6-8", "Sculpzilla #4-6", "Zonker (natural) #6"],
+    "stained": ["Woolly Bugger (black) #4-6", "Sex Dungeon (black/yellow) #2", "Circus Peanut (white/yellow) #4", "Home Invader #2"],
+    "muddy": ["Woolly Bugger (black) #4", "Sex Dungeon (black) #2", "Kreelex (gold/chartreuse) #4"]
+  },
+  "soft_hackles": ["Partridge & Orange #14-16", "Partridge & Green #14-16", "Hare's Ear Soft Hackle #12-14"]
+}

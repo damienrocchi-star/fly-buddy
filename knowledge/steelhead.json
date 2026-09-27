@@ -1,0 +1,22 @@
+{
+  "_about": "Steelhead & salmon knowledge. Sink tips by water-temp band (F). Flies by clarity. Edit freely.",
+  "tips": [
+    { "maxTemp": 40, "label": "Heavy sink tip", "tip": "T-11 to T-14, 10-15 ft", "grain": [10, 14], "why": "Cold water: fish hold deep and won't move far. Get the fly slow and low." },
+    { "maxTemp": 47, "label": "Medium sink tip", "tip": "T-8 to T-11, 10 ft", "grain": [8, 11], "why": "Cool water: fish will move a little. Keep the fly in the bottom third of the water." },
+    { "maxTemp": 54, "label": "Light sink tip", "tip": "T-4 to T-8, or a Type 3 MOW tip", "grain": [4, 8], "why": "Prime temps: fish are active and will come up for a fly in the middle of the water." },
+    { "maxTemp": 99, "label": "Floating line / dry line", "tip": "Floating tip or a clear intermediate polyleader", "grain": [0, 0], "why": "Warm water: fish are aggressive and will rise. Swing just under the surface or skate a dry." }
+  ],
+  "swing_flies": {
+    "clear":   { "size": "1.5-2.5 in", "patterns": ["Green Butt Skunk #4-6", "Sparse Spey (black/blue) #3-5", "Hoh Bo Spey (natural)", "Small Intruder (olive/black) 2 in"] },
+    "slight":  { "size": "2-3 in",    "patterns": ["Hoh Bo Spey (black/blue)", "String Leech (black/blue) 2.5 in", "Intruder (purple/black) 3 in", "Signature Intruder (pink/orange)"] },
+    "stained": { "size": "3-4 in",    "patterns": ["Intruder (black/blue) 3.5 in", "Intruder (pink/orange) 3.5 in", "Hoh Bo Spey (black/purple)", "Big Squid (black/blue)"] },
+    "muddy":   { "size": "4 in +",    "patterns": ["Big Intruder (black/blue) 4 in", "Chartreuse/black Intruder 4 in", "Articulated Leech (black/purple)"] }
+  },
+  "skaters": ["Steelhead Caddis #6-8", "Waller Waker #4-6", "Bomber (natural) #4-6", "Muddler Minnow (skated) #4-6"],
+  "nymph_flies": {
+    "clear":   ["Glo Bug (peach/pale orange) 8-10 mm", "Bead Egg (natural) 8 mm", "Stonefly Nymph #8", "Pheasant Tail #12"],
+    "slight":  ["Glo Bug (peach/orange) 10 mm", "Bead Egg 10 mm", "Pat's Rubber Legs #6-8", "Hare's Ear #10"],
+    "stained": ["Glo Bug (pink/chartreuse) 10-12 mm", "Squirmy Worm (pink) #8", "Pat's Rubber Legs (black) #6", "Bead Egg (bright) 12 mm"],
+    "muddy":   ["Glo Bug (chartreuse/orange) 12 mm", "Squirmy Worm (pink/purple) #6", "Bead Egg (bright) 12-14 mm"]
+  }
+}

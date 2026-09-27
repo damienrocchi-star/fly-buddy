@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Fly Buddy</title>
+  <meta name="description" content="Fly selection and rigging advice from live river conditions. Free, works offline.">
+  <meta name="theme-color" content="#14532d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Fly Buddy">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Fly Buddy</h1>
+    <span id="net" class="net"></span>
+  </header>
+  <main id="app" aria-live="polite"><p class="muted pad">Loading…</p></main>
+  <nav class="tabs" id="tabs">
+    <button data-tab="water" class="on"><span>🌊</span>River</button>
+    <button data-tab="setups"><span>🎣</span>Setups</button>
+    <button data-tab="log"><span>📓</span>Log</button>
+    <button data-tab="gear"><span>🧰</span>Gear</button>
+  </nav>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
