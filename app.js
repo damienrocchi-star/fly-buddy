@@ -4,7 +4,7 @@ import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi }
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
 import { recommend, regionFor } from './engine/recommend.js';
 
-const APP_VERSION = '4'; // keep in step with CACHE in sw.js
+const APP_VERSION = '5'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -15,7 +15,7 @@ const DEFAULT_INPUTS = {
 };
 
 const S = {
-  tab: 'water', kb: null, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
+  tab: 'water', picking: false, kb: null, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -105,7 +105,8 @@ async function selectSite(basic) {
 }
 
 async function findNearMe() {
-  S.loading = 'Finding your location…'; S.nearby = null; S.nearbyTitle = ''; render();
+  // Start fresh: drop any earlier search so only one list shows.
+  S.query = ''; S.loading = 'Finding your location…'; S.nearby = null; S.nearbyTitle = ''; render();
   try {
     S.gps = await gps();
   } catch (e) {
@@ -114,11 +115,13 @@ async function findNearMe() {
   S.loading = 'Looking for river gauges nearby…'; render();
   try {
     S.nearby = await findNearby(S.gps.lat, S.gps.lon);
+    S.nearbyTitle = 'Gauges near you';
     if (!S.nearby.length) toast('No active USGS gauges within about 100 miles. Try manual conditions.');
   } catch (e) {
     // Offline: offer saved favorites, closest first.
     S.nearby = S.favorites.map((f) => ({ ...f, dist: distanceMi(S.gps.lat, S.gps.lon, f.lat, f.lon), cachedOnly: true }))
       .sort((a, b) => a.dist - b.dist);
+    S.nearbyTitle = 'Your saved rivers (no signal)';
     toast('No signal. Showing your saved rivers.');
   }
   S.loading = ''; render();
@@ -197,26 +200,33 @@ function render() {
   $app.innerHTML = html;
 }
 
-function viewWater() {
-  const i = S.inputs;
-  let h = '';
-  if (S.loading) h += `<div class="card"><span class="spin"></span>${esc(S.loading)}</div>`;
+// The River tab has two states: choosing a river (picker), or a river is chosen
+// (compact bar at the top + conditions + "Your spot").
+const isPicking = () => S.picking || (!S.site && !S.manual);
 
-  // Where
-  h += `<div class="card"><h2>Where are you fishing?</h2>
+function viewWater() {
+  return isPicking() ? viewPicker() : viewChosen();
+}
+
+function viewPicker() {
+  let h = '';
+  const canGoBack = S.site || S.manual;
+  h += `<div class="card"><div class="site-head"><h2>Where are you fishing?</h2>${canGoBack ? '<button class="linkish" data-act="back">Cancel</button>' : ''}</div>
     <form class="inline" data-act="search" style="margin-bottom:10px">
-      <input type="search" id="q" enterkeyhint="search" placeholder="River or town, e.g. Pere Marquette" value="${esc(S.query || '')}" autocomplete="off">
+      <span class="qwrap"><input type="search" id="q" enterkeyhint="search" placeholder="River or town, e.g. Pere Marquette" value="${esc(S.query || '')}" autocomplete="off">
+        <button type="button" class="qclear" data-act="clearq" aria-label="Clear search">✕</button></span>
       <button type="submit" style="flex:none">Search</button>
     </form>
     <div class="btn-row">
       <button class="btn-primary" data-act="near">📍 Find gauges near me</button>
     </div>
     <p class="small muted" style="margin:8px 0 0">No gauge on your river? <button class="linkish" data-act="manual">Enter conditions yourself</button></p>`;
+  if (S.loading) h += `<p style="margin:14px 0 0"><span class="spin"></span>${esc(S.loading)}</p>`;
   if (S.nearby) {
     if (S.nearbyTitle) h += `<h3>${esc(S.nearbyTitle)}</h3>`;
     h += S.nearby.length ? `<ul class="site-list">${S.nearby.map((s, k) => `<li><button data-act="pick" data-k="${k}">
       <span><span class="nm">${esc(s.name)}</span><br><span class="small muted">${s.cachedOnly ? 'saved offline' : [s.cfs != null ? `${Math.round(s.cfs).toLocaleString()} cfs` : '', s.waterTempF != null ? `${s.waterTempF}°F` : ''].filter(Boolean).join(' · ')}</span></span>
-      <span class="meta">${s.dist != null ? `${s.dist.toFixed(1)} mi` : '›'}</span></button></li>`).join('')}</ul>` : `<p class="muted">${S.nearbyTitle ? 'No live gauges found. Try a shorter name (e.g. "Pere Marquette"), or a nearby town like "Baldwin, MI".' : 'No gauges found nearby.'}</p>`;
+      <span class="meta">${s.dist != null ? `${s.dist.toFixed(1)} mi` : '›'}</span></button></li>`).join('')}</ul>` : `<p class="muted">${S.query ? 'No live gauges found. Try a shorter name (e.g. "Pere Marquette"), or a nearby town like "Baldwin, MI".' : 'No gauges found nearby.'}</p>`;
   }
   if (S.favorites.length) {
     h += `<h3>★ Saved rivers</h3><ul class="site-list">${S.favorites.map((f, k) =>
@@ -225,13 +235,34 @@ function viewWater() {
       ${S.prep ? `<p class="small muted">${esc(S.prep)}</p>` : ''}`;
   }
   h += `</div>`;
+  if (!S.nearby && !S.loading && !canGoBack) {
+    h += `<div class="card"><p class="muted" style="margin:0">Search any US river by name, or tap <b>Find gauges near me</b> when you're on the water. You'll get live flow and water temp from the nearest USGS gauge, plus weather, then the best flies and rig for right now.</p></div>`;
+  }
+  return h;
+}
 
-  // Conditions
+function viewSelectedBar() {
+  const s = S.site;
+  let name, sub, star = '';
+  if (S.manual) { name = 'Manual conditions'; sub = 'Set the river conditions below'; }
+  else {
+    name = s.name;
+    sub = S.loading ? `<span class="spin"></span>${esc(S.loading)}`
+      : `USGS ${esc(s.id)}${s.time ? ` · reading ${ago(s.time)}` : ''}${S.offline ? ' · <b>offline copy</b>' : ''}`;
+    const isFav = S.favorites.some((f) => f.id === s.id);
+    star = `<button class="star" data-act="star" aria-label="${isFav ? 'Remove from saved rivers' : 'Save river'}">${isFav ? '★' : '☆'}</button>`;
+  }
+  return `<div class="selbar"><span class="ck" aria-hidden="true">✓</span>
+    <div class="selname"><b>${esc(name)}</b><div class="small muted">${sub}</div></div>
+    ${star}<button class="selchange" data-act="change">Change</button></div>`;
+}
+
+function viewChosen() {
+  const i = S.inputs;
+  let h = viewSelectedBar();
   if (S.manual) h += viewManual();
-  else if (S.site && !S.loading) h += viewConditions();
-
-  // Your spot
-  if (S.manual || S.site) {
+  else if (!S.loading) h += viewConditions();
+  {
     h += `<div class="card"><h2>Your spot</h2>
       <label class="field">Fishing for</label>${chips('species', [['trout', 'Trout'], ['steelhead', 'Steelhead / Salmon']], i.species)}
       <label class="field">Water clarity</label>${chips('clarity', [['clear', 'Clear'], ['slight', 'Slight tint'], ['stained', 'Stained'], ['muddy', 'Muddy']], i.clarity)}
@@ -243,21 +274,15 @@ function viewWater() {
       <p style="margin:14px 0 0"><button class="btn-primary" data-act="go">🎣 Show me what to fish</button></p>
     </div>`;
   }
-  if (!S.site && !S.manual && !S.nearby && !S.loading) {
-    h += `<div class="card"><p class="muted" style="margin:0">Search any US river by name, or tap <b>Find gauges near me</b> when you're on the water. You'll get live flow and water temp from the nearest USGS gauge, plus weather, then the best flies and rig for right now.</p></div>`;
-  }
   return h;
 }
 
 function viewConditions() {
   const s = S.site, wx = S.wx, fl = S.flow;
-  const isFav = S.favorites.some((f) => f.id === s.id);
   const sun = sunFor(wx);
   const bandCls = fl ? fl.band.replace(' ', '-') : '';
-  let h = `<div class="card">
-    <div class="site-head"><div><h2 style="margin:0">${esc(s.name)}</h2>
-      <div class="small muted">USGS ${esc(s.id)} · ${s.time ? `reading ${ago(s.time)}` : ''}${S.offline ? ' · <b>offline copy</b>' : ''}</div></div>
-      <button class="star" data-act="star" aria-label="Save river">${isFav ? '★' : '☆'}</button></div>`;
+  // River name, gauge id and the save star live in the selected-river bar above.
+  let h = `<div class="card"><h2>River conditions</h2>`;
   if (S.loadError) h += `<p class="danger">${esc(S.loadError)}</p>`;
   h += `<div class="stats">
     <div class="stat"><div class="k">Flow</div><div class="v">${s.cfs != null ? Math.round(s.cfs).toLocaleString() : '—'}<span class="small"> cfs</span></div>
@@ -308,14 +333,27 @@ function viewSetups() {
 
   const top = r.setups.slice(0, 3), rest = r.setups.slice(3);
   top.forEach((s, k) => { h += setupCard(s, k); });
+  h += fromBoxCard(r.fromBox);
   if (rest.length) h += `<details class="more card"><summary>More options (${rest.length})</summary>${rest.map((s, k) => setupCard(s, k + 3, true)).join('')}</details>`;
   return h;
 }
 
-function setupCard(s, k, inner) {
+function fromBoxCard(fb) {
+  if (!fb) return '';
+  const head = '<div class="rank">🧰 From your fly box</div>';
+  if (fb.status === 'ok') return setupCard(fb.setup, -1, false, head, 'boxsetup');
+  const msg = {
+    topOwned: '<b>Good news:</b> the Best bet above uses flies you already carry.',
+    empty: 'Tick the flies you carry on the <b>Gear</b> tab and I\'ll build a setup from your own box.',
+    nomatch: 'None of the flies in your box suit today\'s setups. Worth picking up some of the flies listed above.',
+  }[fb.status];
+  return `<div class="card boxsetup">${head}<p style="margin:6px 0 0">${msg}</p>
+    ${fb.status === 'empty' ? '<p style="margin:10px 0 0"><button style="width:100%" data-tab="gear">🧰 Go to my fly box</button></p>' : ''}</div>`;
+}
+
+function setupCard(s, k, inner, rankHtml, extraClass = '') {
   const rank = ['Best bet', '2nd choice', '3rd choice'][k] || 'Option';
-  return `<div class="${inner ? '' : 'card '}setup">
-    <div class="rank">${rank}</div><h2>${esc(s.title)}</h2>
+  return `<div class="${inner ? '' : 'card '}setup ${extraClass}">${rankHtml || `<div class="rank">${rank}</div>`}<h2>${esc(s.title)}</h2>
     <ul class="why">${s.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
     <dl class="kv"><dt>Rod</dt><dd>${esc(s.rod.text)}${s.rod.note ? `<br><span class="small muted">${esc(s.rod.note)}</span>` : ''}</dd>
     <dt>Line</dt><dd>${esc(s.line)}</dd></dl>
@@ -323,7 +361,7 @@ function setupCard(s, k, inner) {
     <h3>Flies</h3><ul class="fly-list">${s.flies.map((f) => `<li><span>${f.owned ? '<span class="own">✓ </span>' : ''}${esc(f.name)}</span><span class="role">${esc(f.role)}</span></li>`).join('')}</ul>
     ${s.flies.some((f) => f.owned) ? '<p class="small muted" style="margin:0 0 6px">✓ = in your fly box</p>' : ''}
     <h3>Tips</h3><ul class="notes">${s.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-    <p style="margin:12px 0 0"><button style="width:100%" data-act="logthis" data-key="${s.key}">🐟 Caught one on this? Log it</button></p>
+    <p style="margin:12px 0 0"><button style="width:100%" data-act="logthis" data-key="${s.key}"${extraClass === 'boxsetup' ? ' data-box="1"' : ''}>🐟 Caught one on this? Log it</button></p>
   </div>`;
 }
 
@@ -384,10 +422,12 @@ function condSummary(c) {
   return [c.site, c.waterTempF != null ? `${c.waterTempF}°F water` : '', c.cfs != null ? `${Math.round(c.cfs)} cfs` : '', c.flowBand, c.clarity].filter(Boolean).join(' · ');
 }
 
-function startLog(key) {
+function startLog(key, fromBox) {
   const cond = S.site || S.manual ? currentConditions() : null;
   const res = lastResult;
-  const setup = res && key ? res.setups.find((s) => s.key === key) : null;
+  const setup = !res || !key ? null
+    : fromBox && res.fromBox && res.fromBox.setup ? res.fromBox.setup
+      : res.setups.find((s) => s.key === key);
   S.logDraft = {
     species: S.inputs.species, technique: key || (S.inputs.species === 'steelhead' ? 'swing' : 'nymph'),
     fly: setup ? setup.flies[0].name.replace(/^(Tag|Point):\s*/, '') : '', length: '', notes: '', photo: null,
@@ -518,9 +558,15 @@ $app.addEventListener('click', async (e) => {
   if (!b || b.type === 'file') return;
   const act = b.dataset.act;
   if (act === 'near') findNearMe();
-  else if (act === 'manual') { S.manual = true; S.site = null; S.wx = null; S.flow = null; saveSession(); render(); if (navigator.onLine) manualWeatherFromGps(); }
-  else if (act === 'pick') selectSite(S.nearby[+b.dataset.k]);
-  else if (act === 'fav') selectSite(S.favorites[+b.dataset.k]);
+  else if (act === 'manual') { S.picking = false; S.manual = true; S.site = null; S.wx = null; S.flow = null; saveSession(); render(); window.scrollTo(0, 0); if (navigator.onLine) manualWeatherFromGps(); }
+  else if (act === 'pick' || act === 'fav') {
+    // Switch straight to the "chosen" view so the tap is obviously registered.
+    S.picking = false; window.scrollTo(0, 0);
+    selectSite((act === 'pick' ? S.nearby : S.favorites)[+b.dataset.k]);
+  }
+  else if (act === 'change') { S.picking = true; S.query = ''; render(); window.scrollTo(0, 0); }
+  else if (act === 'back') { S.picking = false; render(); window.scrollTo(0, 0); }
+  else if (act === 'clearq') { S.query = ''; S.nearby = null; S.nearbyTitle = ''; render(); document.getElementById('q').focus(); }
   else if (act === 'star') {
     const s = S.site, i = S.favorites.findIndex((f) => f.id === s.id);
     if (i >= 0) S.favorites.splice(i, 1); else S.favorites.push({ id: s.id, name: s.name, lat: s.lat, lon: s.lon });
@@ -534,7 +580,7 @@ $app.addEventListener('click', async (e) => {
     const y = window.scrollY; render(); window.scrollTo(0, y);
   }
   else if (act === 'go') { S.tab = 'setups'; render(); window.scrollTo(0, 0); }
-  else if (act === 'logthis') startLog(b.dataset.key);
+  else if (act === 'logthis') startLog(b.dataset.key, !!b.dataset.box);
   else if (act === 'newlog') startLog(null);
   else if (act === 'cancellog') { S.logDraft = null; render(); }
   else if (act === 'savelog') {

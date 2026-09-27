@@ -92,7 +92,132 @@ export function recommend(cond, kb, gear = {}, catches = []) {
   markOwnedFlies(out.setups, gear);
   out.setups.sort((a, b) => b.score - a.score);
   out.cond = c;
+  out.fromBox = buildFromBox(out, c, kb, gear);
   return out;
+}
+
+// ---------- "from your fly box" ----------
+
+// "Tag: Zebra Midge (black/red) #18-22" -> "zebra midge"
+export const flyKey = (n) => String(n).replace(/^(tag|point):\s*/i, '').split(/[#(]/)[0]
+  .replace(/\s+\d[\d.\-]*\s*(in|mm)?\s*\+?$/i, '').trim().toLowerCase();
+
+// What each fly slot in a setup needs, top to bottom (matches the order of 'fly' parts in the rig).
+const SLOTS = {
+  dry: ['dry'], drydropper: ['dry', 'nymph'], nymph: ['nymph', 'nymph'], euro: ['nymph', 'nymph'],
+  streamer: ['streamer'], softhackle: ['emerger', 'emerger'],
+  swing: ['swing'], skate: ['skater'], shnymph: ['egg', 'egg'],
+};
+// Which fly types can fill each slot, best first.
+const ACCEPTS = {
+  dry: ['dry'], nymph: ['nymph'], emerger: ['emerger'], streamer: ['streamer'],
+  swing: ['swing', 'streamer'], skater: ['skater'], egg: ['egg', 'nymph'],
+};
+
+function flyTypes(kb) {
+  const hs = kb.hatches.hatches, fl = kb.flies, sh = kb.steelhead;
+  const set = (names) => new Set(names.map(flyKey));
+  return {
+    dry: set([...hs.flatMap((h) => h.dry), ...fl.attractor_dries]),
+    emerger: set([...hs.flatMap((h) => h.emerger), ...fl.soft_hackles]),
+    nymph: set([...hs.flatMap((h) => h.nymph), ...Object.values(fl.nymphs).flat(), ...fl.winter_nymphs, 'Perdigon', "Walt's Worm"]),
+    streamer: set(Object.values(fl.streamers).flat()),
+    swing: set(Object.values(sh.swing_flies).flatMap((x) => x.patterns)),
+    skater: set(sh.skaters),
+    egg: set(Object.values(sh.nymph_flies).flat()),
+  };
+}
+
+// Knowledge-table flies that suit today's clarity, per fly type.
+function clarityFlies(kb, clarity) {
+  const fl = kb.flies, sh = kb.steelhead;
+  return {
+    nymph: fl.nymphs[clarity] || [], streamer: fl.streamers[clarity] || [],
+    swing: (sh.swing_flies[clarity] || { patterns: [] }).patterns, egg: sh.nymph_flies[clarity] || [],
+    dry: fl.attractor_dries, emerger: fl.soft_hackles, skater: sh.skaters,
+  };
+}
+
+function buildFromBox(out, c, kb, gear) {
+  const box = ((gear && gear.flies) || []).map((f) => f.trim()).filter(Boolean);
+  if (!box.length) return { status: 'empty' };
+  const types = flyTypes(kb);
+  const clar = clarityFlies(kb, c.clarity);
+  const hatchFlies = { dry: [], emerger: [], nymph: [] };
+  for (const { h } of out.hatches || []) {
+    hatchFlies.dry.push(...h.dry); hatchFlies.emerger.push(...h.emerger); hatchFlies.nymph.push(...h.nymph);
+  }
+  const owned = box.map((name) => ({ name, key: flyKey(name) }));
+  const typeOf = (key) => Object.keys(types).filter((t) => types[t].has(key));
+
+  let best = null;
+  out.setups.forEach((s, rank) => {
+    const slots = SLOTS[s.key];
+    if (!slots) return;
+    const flyParts = s.rig.filter((p) => p.kind === 'fly');
+    const used = new Set();
+    const picks = [];
+    let penalty = 0;
+    for (const [i, slot] of slots.entries()) {
+      const wanted = flyParts[i] ? flyParts[i].label : '';
+      const wantedKey = flyKey(wanted);
+      const setupKeys = new Set(s.flies.map((f) => flyKey(f.name)));
+      const hatchKeys = new Set((hatchFlies[slot] || []).map(flyKey));
+      const clarKeys = new Set((clar[slot] || []).map(flyKey));
+      let pick = null;
+      for (const o of owned) {
+        if (used.has(o.key)) continue;
+        const accepted = ACCEPTS[slot].findIndex((t) => typeOf(o.key).includes(t));
+        if (accepted < 0) continue;
+        // Lower cost = better match for this slot.
+        const cost = o.key === wantedKey ? 0 : setupKeys.has(o.key) ? 3 : hatchKeys.has(o.key) ? 5 : clarKeys.has(o.key) ? 8 : 15;
+        const total = cost + accepted * 5;
+        if (!pick || total < pick.cost) pick = { ...o, cost: total, wanted, why: cost === 0 ? 'exact' : cost === 3 ? 'listed' : cost === 5 ? 'hatch' : cost === 8 ? 'clarity' : 'type' };
+      }
+      if (!pick) return; // can't fill this slot from the box
+      used.add(pick.key);
+      picks.push(pick);
+      penalty += pick.cost;
+    }
+    const total = s.score - penalty;
+    if (!best || total > best.total) best = { s, rank, picks, total, penalty };
+  });
+  if (!best) return { status: 'nomatch' };
+  if (best.rank === 0 && best.penalty === 0) return { status: 'topOwned' };
+
+  // Build a copy of the setup with the box flies swapped in.
+  const s = best.s;
+  // Box entries are pattern names without sizes. Carry the recommended size over only
+  // when the substitute imitates the same kind of bug; otherwise use the pattern's usual size.
+  for (const p of best.picks) {
+    const size = /#\d+(?:-\d+)?/.exec(p.wanted);
+    if (size && !/#\d/.test(p.name) && ['exact', 'listed', 'hatch'].includes(p.why)) p.name = `${p.name} ${size[0]}`;
+  }
+  let fi = 0;
+  const rig = s.rig.map((p) => {
+    if (p.kind !== 'fly') return { ...p };
+    const pick = best.picks[fi++];
+    const prefix = /^(Tag|Point):/i.exec(p.label);
+    return { ...p, label: `${prefix ? prefix[0] + ' ' : ''}${pick.name}`, detail: p.detail };
+  });
+  const reason = {
+    exact: 'the exact fly recommended', listed: 'one of the recommended patterns', hatch: 'it matches a bug that should be hatching',
+    clarity: 'it suits today\'s water clarity', type: 'it\'s the closest type you carry',
+  };
+  const why = ['Built from flies you already carry.'];
+  best.picks.forEach((p, i) => {
+    if (p.why === 'exact') return;
+    // For dries, emergers and skaters the "clarity" list is really the general attractor list.
+    const r = p.why === 'clarity' && ['dry', 'emerger', 'skater'].includes(SLOTS[s.key][i]) ? 'it\'s a reliable all-round pattern' : reason[p.why];
+    why.push(`${p.name} in place of ${p.wanted.replace(/^(Tag|Point):\s*/i, '')}: ${r}.`);
+  });
+  return {
+    status: 'ok',
+    setup: {
+      ...s, title: s.title, score: best.total, why, rig,
+      flies: best.picks.map((p, i) => ({ name: p.name, role: SLOTS[s.key][i], owned: true })),
+    },
+  };
 }
 
 // ---------- TROUT ----------
