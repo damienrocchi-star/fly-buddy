@@ -4,7 +4,7 @@ import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi }
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
 import { recommend, regionFor } from './engine/recommend.js';
 
-const APP_VERSION = '3'; // keep in step with CACHE in sw.js
+const APP_VERSION = '4'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -15,7 +15,7 @@ const DEFAULT_INPUTS = {
 };
 
 const S = {
-  tab: 'water', kb: null, gear: { rods: [], flies: [] }, catches: [], favorites: [],
+  tab: 'water', kb: null, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -401,16 +401,16 @@ function startLog(key) {
   S.tab = 'log'; render(); window.scrollTo(0, 0);
 }
 
-function resizePhoto(file) {
+function resizePhoto(file, maxPx = 900, quality = 0.72) {
   return new Promise((res) => {
     const img = new Image();
     img.onload = () => {
-      const k = Math.min(1, 900 / Math.max(img.width, img.height));
+      const k = Math.min(1, maxPx / Math.max(img.width, img.height));
       const cv = document.createElement('canvas');
       cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
       cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
       URL.revokeObjectURL(img.src);
-      res(cv.toDataURL('image/jpeg', 0.72));
+      res(cv.toDataURL('image/jpeg', quality));
     };
     img.onerror = () => res(null);
     img.src = URL.createObjectURL(file);
@@ -418,6 +418,36 @@ function resizePhoto(file) {
 }
 
 // ---------- Gear ----------
+
+// Base pattern name: "Zebra Midge (black/red) #18-22" -> "Zebra Midge". This is also how setups match your box.
+const flyBase = (n) => n.split(/[#(]/)[0].replace(/\s+\d[\d.\-]*\s*(in|mm)?\s*\+?$/i, '').trim();
+
+// Every pattern the app can recommend, grouped. Built from /knowledge so it stays in sync.
+let catalogCache = null;
+function flyCatalog() {
+  if (catalogCache) return catalogCache;
+  const kb = S.kb, seen = new Set();
+  const groups = [['Dry flies', []], ['Emergers & soft hackles', []], ['Nymphs, worms & eggs', []], ['Streamers', []], ['Steelhead & salmon', []]];
+  const add = (gi, names) => {
+    for (const n of names) {
+      const b = flyBase(n), k = b.toLowerCase();
+      if (b && !seen.has(k)) { seen.add(k); groups[gi][1].push(b); }
+    }
+  };
+  const hs = kb.hatches.hatches;
+  // Order matters: a pattern listed in several places goes in the first group that claims it.
+  add(0, hs.flatMap((h) => h.dry)); add(0, kb.flies.attractor_dries);
+  add(2, hs.flatMap((h) => h.nymph)); add(2, Object.values(kb.flies.nymphs).flat()); add(2, kb.flies.winter_nymphs);
+  add(2, ['Perdigon', "Walt's Worm"]); // euro nymphing staples used by the engine
+  add(3, Object.values(kb.flies.streamers).flat());
+  add(1, hs.flatMap((h) => h.emerger)); add(1, kb.flies.soft_hackles);
+  const sh = kb.steelhead;
+  add(4, Object.values(sh.swing_flies).flatMap((x) => x.patterns)); add(4, sh.skaters); add(4, Object.values(sh.nymph_flies).flat());
+  for (const g of groups) g[1].sort((a, b) => a.localeCompare(b));
+  catalogCache = groups;
+  return groups;
+}
+const catalogSet = () => new Set(flyCatalog().flatMap((g) => g[1]).map((n) => n.toLowerCase()));
 
 function viewGear() {
   const g = S.gear;
@@ -431,11 +461,46 @@ function viewGear() {
       <select id="rtype"><option value="single">Single-hand</option><option value="euro">Euro nymph</option><option value="switch">Switch</option><option value="spey">Spey</option></select>
     </div>
     <p style="margin:10px 0 0"><button style="width:100%" data-act="addrod">+ Add rod</button></p></div>
-  <div class="card"><h2>My fly box</h2>
-    <p class="small muted" style="margin-top:0">One fly per line, e.g. "Pheasant Tail" or "Zebra Midge". Flies you have get a ✓ in setups.</p>
-    <textarea id="flybox">${esc(g.flies.join('\n'))}</textarea>
-    <p style="margin:10px 0 0"><button style="width:100%" data-act="saveflies">Save fly box</button></p></div>
+  ${viewFlyBox()}
+  ${viewBoxPhotos()}
   <div class="card small muted">Fly Buddy uses free public data: USGS river gauges and Open-Meteo weather. All advice comes from built-in rules, with no paid services. Your data stays on this phone.<br><br>App version ${APP_VERSION}</div>`;
+}
+
+function viewFlyBox() {
+  const owned = new Set(S.gear.flies.map((f) => f.toLowerCase()));
+  const known = catalogSet();
+  const others = S.gear.flies.filter((f) => !known.has(f.toLowerCase()));
+  const groups = flyCatalog();
+  const ticked = groups.reduce((n, g) => n + g[1].filter((f) => owned.has(f.toLowerCase())).length, 0);
+  return `<div class="card"><h2>My fly box</h2>
+    <p class="small muted" style="margin-top:0">Tap the patterns you carry. Setups mark them ✓ so you know what you already have. Sizes and colors don't matter here.</p>
+    <p style="margin:0 0 6px"><b id="flycount">${ticked}</b> patterns ticked</p>
+    ${groups.map(([name, flies]) => {
+      const n = flies.filter((f) => owned.has(f.toLowerCase())).length;
+      return `<details class="flygroup"><summary>${esc(name)} <span class="muted small">(<span data-gcount>${n}</span> of ${flies.length})</span></summary>
+        <div class="chips">${flies.map((f) => `<button class="chip ${owned.has(f.toLowerCase()) ? 'on' : ''}" data-act="flytoggle" data-v="${esc(f)}">${esc(f)}</button>`).join('')}</div></details>`;
+    }).join('')}
+    <h3>Other flies (not in the list)</h3>
+    <p class="small muted" style="margin-top:0">One per line. Useful for your own patterns.</p>
+    <textarea id="flybox" style="min-height:90px">${esc(others.join('\n'))}</textarea>
+    <p style="margin:10px 0 0"><button style="width:100%" data-act="saveflies">Save other flies</button></p></div>`;
+}
+
+function viewBoxPhotos() {
+  const ph = S.boxPhotos;
+  return `<div class="card"><h2>Fly box photos</h2>
+    <p class="small muted" style="margin-top:0">Snap each box so you can check what's in it on the water. Tap a photo to see it full size. Pinch to zoom.</p>
+    ${ph.length ? `<div class="photo-grid">${ph.map((p, k) => `<figure><button class="thumb" data-act="viewphoto" data-k="${k}"><img src="${p.photo}" alt="${esc(p.label)}"></button>
+      <figcaption><input type="text" value="${esc(p.label)}" data-boxlabel="${k}" aria-label="Photo name"><button class="linkish danger small" data-act="delphoto" data-k="${k}">Delete</button></figcaption></figure>`).join('')}</div>` : ''}
+    <label class="btn" style="display:block;text-align:center;margin-top:10px">📷 Add a fly box photo<input type="file" accept="image/*" data-act="boxphoto" hidden></label></div>`;
+}
+
+function showPhoto(src) {
+  const o = document.createElement('div');
+  o.className = 'viewer';
+  o.innerHTML = `<button class="viewer-x" aria-label="Close">✕ Close</button><img src="${src}" alt="">`;
+  o.addEventListener('click', (e) => { if (e.target.closest('.viewer-x') || e.target === o) o.remove(); });
+  document.body.appendChild(o);
 }
 
 // ---------- events ----------
@@ -487,12 +552,31 @@ $app.addEventListener('click', async (e) => {
     await store.set('gear', S.gear); render(); toast('Rod added');
   }
   else if (act === 'delrod') { S.gear.rods.splice(+b.dataset.k, 1); await store.set('gear', S.gear); render(); }
+  else if (act === 'flytoggle') {
+    // Toggle in place (no re-render) so the open section stays open.
+    const name = b.dataset.v, k = name.toLowerCase();
+    const i = S.gear.flies.findIndex((f) => f.toLowerCase() === k);
+    if (i >= 0) S.gear.flies.splice(i, 1); else S.gear.flies.push(name);
+    b.classList.toggle('on', i < 0);
+    const grp = b.closest('details');
+    grp.querySelector('[data-gcount]').textContent = grp.querySelectorAll('.chip.on').length;
+    document.getElementById('flycount').textContent = document.querySelectorAll('.flygroup .chip.on').length;
+    await store.set('gear', S.gear);
+  }
   else if (act === 'saveflies') {
-    S.gear.flies = document.getElementById('flybox').value.split('\n').map((x) => x.trim()).filter(Boolean);
-    await store.set('gear', S.gear); toast('Fly box saved');
+    const known = catalogSet();
+    const ticked = S.gear.flies.filter((f) => known.has(f.toLowerCase()));
+    const others = document.getElementById('flybox').value.split('\n').map((x) => x.trim()).filter(Boolean);
+    S.gear.flies = [...ticked, ...others];
+    await store.set('gear', S.gear); toast('Saved');
+  }
+  else if (act === 'viewphoto') showPhoto(S.boxPhotos[+b.dataset.k].photo);
+  else if (act === 'delphoto') {
+    if (!confirm('Delete this photo?')) return;
+    S.boxPhotos.splice(+b.dataset.k, 1); await store.set('boxPhotos', S.boxPhotos); render();
   }
   else if (act === 'export') {
-    const blob = new Blob([JSON.stringify({ app: 'fly-buddy', v: 1, gear: S.gear, catches: S.catches, favorites: S.favorites }, null, 1)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify({ app: 'fly-buddy', v: 1, gear: S.gear, catches: S.catches, favorites: S.favorites, boxPhotos: S.boxPhotos }, null, 1)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = `fly-buddy-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -515,6 +599,9 @@ $app.addEventListener('input', (e) => {
     saveSession();
   } else if (el.dataset.log) {
     S.logDraft[el.dataset.log] = el.value;
+  } else if (el.dataset.boxlabel) {
+    S.boxPhotos[+el.dataset.boxlabel].label = el.value;
+    store.set('boxPhotos', S.boxPhotos);
   }
 });
 
@@ -524,13 +611,21 @@ $app.addEventListener('change', async (e) => {
   if (el.dataset.act === 'photo' && el.files[0]) {
     S.logDraft.photo = await resizePhoto(el.files[0]); render();
   }
+  if (el.dataset.act === 'boxphoto' && el.files[0]) {
+    // Keep box photos sharper than catch photos so small flies are readable when zoomed.
+    const photo = await resizePhoto(el.files[0], 1600, 0.8);
+    if (!photo) { toast('Could not read that photo.'); return; }
+    S.boxPhotos.push({ photo, label: `Box ${S.boxPhotos.length + 1}`, date: Date.now() });
+    await store.set('boxPhotos', S.boxPhotos); render(); toast('Photo saved');
+  }
   if (el.dataset.act === 'import' && el.files[0]) {
     try {
       const j = JSON.parse(await el.files[0].text());
       if (j.app !== 'fly-buddy') throw new Error();
       if (!confirm(`Restore ${j.catches.length} catches, ${j.gear.rods.length} rods and ${j.favorites.length} rivers? This replaces what's on this phone.`)) return;
       S.gear = j.gear; S.catches = j.catches; S.favorites = j.favorites;
-      await Promise.all([store.set('gear', S.gear), store.set('catches', S.catches), store.set('favorites', S.favorites)]);
+      if (j.boxPhotos) S.boxPhotos = j.boxPhotos;
+      await Promise.all([store.set('gear', S.gear), store.set('catches', S.catches), store.set('favorites', S.favorites), store.set('boxPhotos', S.boxPhotos)]);
       render(); toast('Backup restored');
     } catch (err) { toast('That file is not a Fly Buddy backup.'); }
   }
@@ -561,6 +656,7 @@ window.addEventListener('offline', render);
   S.gear = await store.get('gear', { rods: [], flies: [] });
   S.catches = await store.get('catches', []);
   S.favorites = await store.get('favorites', []);
+  S.boxPhotos = await store.get('boxPhotos', []);
   S.prep = await store.get('prepMsg', '');
   const sess = await store.get('session');
   if (sess) {

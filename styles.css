@@ -148,6 +148,18 @@ details.more > summary { cursor: pointer; font-weight: 700; padding: 8px 0; colo
 .k-tippet { --w: 1.5px; --c: var(--tip); }
 .k-indicator, .k-shot, .k-fly { --w: 1.5px; --c: var(--tip); }
 
+.flygroup { border-top: 1px solid var(--line); }
+.flygroup > summary { cursor: pointer; font-weight: 700; padding: 12px 0; list-style-position: inside; }
+.flygroup .chips { margin-top: 0; }
+.photo-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.photo-grid figure { margin: 0; }
+.photo-grid .thumb { padding: 0; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 10px; background: var(--bg); }
+.photo-grid .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-grid figcaption { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.photo-grid figcaption input { min-height: 38px; padding: 6px 8px; font-size: 15px; }
+.viewer { position: fixed; inset: 0; z-index: 50; background: #000; overflow: auto; -webkit-overflow-scrolling: touch; touch-action: pan-x pan-y pinch-zoom; }
+.viewer img { display: block; width: 100%; height: auto; margin-top: calc(56px + env(safe-area-inset-top)); }
+.viewer-x { position: fixed; top: calc(8px + env(safe-area-inset-top)); right: 12px; z-index: 51; background: rgba(255,255,255,.92); color: #111; font-weight: 700; }
 .log-item { display: flex; gap: 12px; }
 .log-item img { width: 76px; height: 76px; object-fit: cover; border-radius: 10px; flex: none; }
 .log-item .t { font-weight: 700; }

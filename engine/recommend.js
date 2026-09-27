@@ -465,7 +465,8 @@ function markOwnedFlies(setups, gear) {
   const key = (n) => n.toLowerCase().replace(/^(tag|point):\s*/, '').split(/[#(]/)[0].trim();
   for (const s of setups) for (const f of s.flies) {
     const k = key(f.name);
-    f.owned = box.some((b) => b.includes(k) || k.includes(b));
+    // Exact pattern match, or a loose match for longer custom names ("rubber legs" ~ "pat's rubber legs").
+    f.owned = box.includes(k) || box.some((b) => b.length >= 5 && (b.includes(k) || k.includes(b)));
   }
 }
 

@@ -1,8 +1,13 @@
 // USGS river gauges: free, no API key.
-// Primary: legacy NWIS Instantaneous Values service. Fallback: new OGC Water Data API.
+// Area/name lookups use the new USGS Water Data API (fast). Single-gauge detail and
+// flow history use the legacy NWIS services (fast for one site). Each falls back to the other.
 const IV = 'https://waterservices.usgs.gov/nwis/iv/';
 const STAT = 'https://waterservices.usgs.gov/nwis/stat/';
-const OGC = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/latest-continuous/items';
+const API = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections';
+const LATEST = `${API}/latest-continuous/items`;
+const CONTINUOUS = `${API}/continuous/items`;
+const LOCATIONS = `${API}/monitoring-locations/items`;
+const MAX_AGE_MS = 48 * 3600e3; // ignore gauges that haven't reported in 2 days
 
 const P_FLOW = '00060', P_TEMP = '00010', P_HEIGHT = '00065';
 
@@ -79,16 +84,61 @@ function trendOf(series) {
   return 'steady';
 }
 
+const idOf = (f) => (f.properties.monitoring_location_id || f.id).replace(/^USGS-/, '');
+
+// Stream gauge names for everything in a box: { id: "Pere Marquette River at Scottville, MI" }.
+async function namesInBbox(bbox) {
+  const json = await getJSON(`${LOCATIONS}?f=json&bbox=${bbox}&site_type_code=ST&limit=3000&properties=monitoring_location_name&skipGeometry=true`, 25000);
+  const out = {};
+  for (const f of json.features || []) out[f.id.replace(/^USGS-/, '')] = tidyName(f.properties.monitoring_location_name || '');
+  return out;
+}
+
+async function namesForIds(ids) {
+  const list = ids.map((id) => `'USGS-${id}'`).join(',');
+  const json = await getJSON(`${LOCATIONS}?f=json&filter-lang=cql2-text&filter=${encodeURIComponent(`id IN (${list})`)}&properties=monitoring_location_name&skipGeometry=true&limit=${ids.length}`);
+  const out = {};
+  for (const f of json.features || []) out[f.id.replace(/^USGS-/, '')] = tidyName(f.properties.monitoring_location_name || '');
+  return out;
+}
+
+// Latest readings (new API) -> site list. Drops stale sensors; names come from `names`.
+function parseLatest(json, names) {
+  const sites = {};
+  const now = Date.now();
+  for (const f of json.features || []) {
+    const p = f.properties;
+    const v = parseFloat(p.value);
+    if (isNaN(v) || now - new Date(p.time).getTime() > MAX_AGE_MS) continue;
+    const id = idOf(f);
+    if (names && !names[id]) continue; // not a stream gauge (well, lake, etc.)
+    const s = sites[id] || (sites[id] = { id, name: (names && names[id]) || `USGS gauge ${id}`, lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] });
+    const key = p.parameter_code === P_FLOW ? 'flowSeries' : p.parameter_code === P_TEMP ? 'tempSeries' : null;
+    // A site can have several sensors; keep the newest reading.
+    if (key && (!s[key] || s[key][0].t < p.time)) s[key] = [{ t: p.time, v }];
+  }
+  const list = Object.values(sites);
+  list.forEach(summarize);
+  return list;
+}
+
+const bboxAround = (lat, lon, d) => [lon - d * 1.3, lat - d, lon + d * 1.3, lat + d].map((x) => x.toFixed(4)).join(',');
+
 // Gauges near a point, closest first. Widens the search if nothing is close.
 export async function findNearby(lat, lon) {
   for (const d of [0.35, 0.8, 1.6]) {
+    const bbox = bboxAround(lat, lon, d);
     let list;
     try {
-      const bbox = [lon - d * 1.3, lat - d, lon + d * 1.3, lat + d].map((x) => x.toFixed(4)).join(',');
-      const url = `${IV}?format=json&bBox=${bbox}&parameterCd=${P_FLOW},${P_TEMP}&siteType=ST&siteStatus=active&period=PT3H`;
-      list = parseIV(await getJSON(url));
+      const [latest, names] = await Promise.all([
+        getJSON(`${LATEST}?f=json&bbox=${bbox}&parameter_code=${P_FLOW},${P_TEMP}&limit=3000`, 25000),
+        namesInBbox(bbox).catch(() => null),
+      ]);
+      list = parseLatest(latest, names);
     } catch (e) {
-      list = await ogcNearby(lat, lon, d);
+      // Legacy service: slower, but has names built in.
+      const url = `${IV}?format=json&bBox=${bbox}&parameterCd=${P_FLOW},${P_TEMP}&siteType=ST&siteStatus=active&period=PT3H`;
+      list = parseIV(await getJSON(url, 60000));
     }
     list = list.filter((s) => s.cfs != null || s.waterTempF != null);
     if (list.length >= 3 || d === 1.6) {
@@ -99,29 +149,6 @@ export async function findNearby(lat, lon) {
   return [];
 }
 
-async function ogcNearby(lat, lon, d) {
-  const bbox = [lon - d * 1.3, lat - d, lon + d * 1.3, lat + d].map((x) => x.toFixed(4)).join(',');
-  const json = await getJSON(`${OGC}?f=json&bbox=${bbox}&parameter_code=${P_FLOW},${P_TEMP}&limit=500`);
-  return parseOGC(json);
-}
-
-function parseOGC(json) {
-  const sites = {};
-  for (const f of json.features || []) {
-    const p = f.properties;
-    const id = p.monitoring_location_id.replace(/^USGS-/, '');
-    const s = sites[id] || (sites[id] = { id, name: `USGS ${id}`, lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] });
-    const v = parseFloat(p.value);
-    if (isNaN(v)) continue;
-    if (p.parameter_code === P_FLOW) s.flowSeries = [{ t: p.time, v }];
-    if (p.parameter_code === P_TEMP) s.tempSeries = [{ t: p.time, v }];
-  }
-  const list = Object.values(sites);
-  list.forEach(summarize);
-  return list;
-}
-
-const LOCATIONS = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/monitoring-locations/items';
 const GEOCODE = 'https://geocoding-api.open-meteo.com/v1/search';
 const SKIP_WORDS = new Set(['RIVER', 'R', 'THE', 'AT', 'NEAR', 'NR', 'OF']);
 const STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming' };
@@ -140,8 +167,9 @@ export async function searchByName(query) {
     if (state) conds.push(`state_name='${STATES[state]}'`);
     const url = `${LOCATIONS}?f=json&limit=500&properties=monitoring_location_name,state_name&filter=${encodeURIComponent(conds.join(' AND '))}&filter-lang=cql2-text`;
     const json = await getJSON(url, 30000);
-    const ids = (json.features || []).map((f) => f.id.replace(/^USGS-/, ''));
-    const live = await liveSites(ids);
+    const names = {};
+    for (const f of json.features || []) names[f.id.replace(/^USGS-/, '')] = tidyName(f.properties.monitoring_location_name || '');
+    const live = await liveSites(names);
     if (live.length) return { kind: 'name', sites: live.sort((a, b) => a.name.localeCompare(b.name)) };
   }
   // Fall back to a place name.
@@ -151,16 +179,22 @@ export async function searchByName(query) {
   return { kind: 'place', place: place.label, sites };
 }
 
-// Which of these gauges are reporting right now (with their latest readings).
-async function liveSites(ids) {
+// Which of these gauges are reporting right now (with their latest readings). names = { id: name }.
+async function liveSites(names) {
+  const ids = Object.keys(names);
   const out = [];
   for (let i = 0; i < ids.length; i += 100) {
-    const batch = ids.slice(i, i + 100).join(',');
-    if (!batch) break;
+    const batch = ids.slice(i, i + 100);
     try {
-      const json = await getJSON(`${IV}?format=json&sites=${batch}&parameterCd=${P_FLOW},${P_TEMP}&siteStatus=active&period=PT3H`, 30000);
-      out.push(...parseIV(json).filter((s) => s.cfs != null || s.waterTempF != null));
-    } catch (e) { /* no live sites in this batch (USGS returns an error) */ }
+      const filter = `monitoring_location_id IN (${batch.map((id) => `'USGS-${id}'`).join(',')})`;
+      const json = await getJSON(`${LATEST}?f=json&parameter_code=${P_FLOW},${P_TEMP}&filter-lang=cql2-text&filter=${encodeURIComponent(filter)}&limit=1000`, 25000);
+      out.push(...parseLatest(json, names).filter((s) => s.cfs != null || s.waterTempF != null));
+    } catch (e) {
+      try {
+        const json = await getJSON(`${IV}?format=json&sites=${batch.join(',')}&parameterCd=${P_FLOW},${P_TEMP}&siteStatus=active&period=PT3H`, 45000);
+        out.push(...parseIV(json).filter((s) => s.cfs != null || s.waterTempF != null));
+      } catch (e2) { /* no live sites in this batch */ }
+    }
   }
   return out;
 }
@@ -181,13 +215,21 @@ async function geocode(query) {
 export async function getSite(id) {
   try {
     const url = `${IV}?format=json&sites=${id}&parameterCd=${P_FLOW},${P_TEMP},${P_HEIGHT}&period=P1D`;
-    const list = parseIV(await getJSON(url));
+    const list = parseIV(await getJSON(url, 15000));
     if (list.length) return list[0];
-  } catch (e) { /* fall through */ }
-  const json = await getJSON(`${OGC}?f=json&monitoring_location_id=USGS-${id}&limit=50`);
-  const list = parseOGC(json);
-  if (!list.length) throw new Error('No data for this gauge');
-  return list[0];
+  } catch (e) { /* fall through to the new API */ }
+  const series = (code) => getJSON(`${CONTINUOUS}?f=json&monitoring_location_id=USGS-${id}&parameter_code=${code}&time=P1D&limit=500&properties=time,value`, 25000)
+    .then((j) => (j.features || []).map((f) => ({ t: f.properties.time, v: parseFloat(f.properties.value) })).filter((p) => !isNaN(p.v)).sort((a, b) => (a.t < b.t ? -1 : 1)))
+    .catch(() => []);
+  const [flow, temp, names, loc] = await Promise.all([
+    series(P_FLOW), series(P_TEMP), namesForIds([id]).catch(() => ({})),
+    getJSON(`${LOCATIONS}/USGS-${id}?f=json`).catch(() => null),
+  ]);
+  if (!flow.length && !temp.length) throw new Error('No data for this gauge');
+  const s = { id, name: names[id] || `USGS gauge ${id}`, flowSeries: flow, tempSeries: temp };
+  if (loc && loc.geometry) { s.lon = loc.geometry.coordinates[0]; s.lat = loc.geometry.coordinates[1]; }
+  summarize(s);
+  return s;
 }
 
 // Daily flow percentiles for every day of the year: { "9-27": [p25, p50, p75] }.
