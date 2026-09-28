@@ -1,0 +1,25 @@
+{
+  "_about": "Fishing-conditions score out of 100. Each factor gets up to 'weight' points. 'temp' is a curve of [water temp F, fraction of points]; values in between are interpolated. Other factors map a condition to a fraction (0-1). Weights for a species should add up to 100. Edit freely.",
+  "labels": [
+    { "min": 80, "label": "Excellent", "level": "great" },
+    { "min": 65, "label": "Good", "level": "good" },
+    { "min": 50, "label": "Fair", "level": "fair" },
+    { "min": 35, "label": "Poor", "level": "poor" },
+    { "min": 0, "label": "Tough", "level": "bad" }
+  ],
+  "defaultMinScore": 50,
+  "trout": {
+    "weights": { "temp": 30, "flow": 25, "trend": 10, "clarity": 15, "weather": 10, "hatch": 10 },
+    "temp": [[32, 0], [38, 0.3], [42, 0.55], [48, 0.85], [50, 1], [62, 1], [65, 0.7], [67, 0.35], [68, 0]],
+    "stopTempF": 68,
+    "flow": { "very low": 0.35, "low": 0.75, "normal": 1, "high": 0.55, "very high": 0.15, "unknown": 0.7 },
+    "clarity": { "clear": 0.85, "slight": 1, "stained": 0.6, "muddy": 0.1 }
+  },
+  "steelhead": {
+    "weights": { "temp": 30, "flow": 25, "trend": 15, "clarity": 20, "weather": 10, "hatch": 0 },
+    "temp": [[32, 0], [36, 0.3], [40, 0.7], [44, 1], [55, 1], [60, 0.7], [64, 0.35], [68, 0]],
+    "stopTempF": 68,
+    "flow": { "very low": 0.3, "low": 0.7, "normal": 1, "high": 0.7, "very high": 0.2, "unknown": 0.7 },
+    "clarity": { "clear": 0.8, "slight": 1, "stained": 0.75, "muddy": 0.15 }
+  }
+}

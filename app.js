@@ -2,9 +2,11 @@
 import * as store from './store.js';
 import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi } from './data/usgs.js';
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
-import { recommend, regionFor } from './engine/recommend.js';
+import { recommend, regionFor, estimateWaterTempF } from './engine/recommend.js';
+import { rateConditions } from './engine/rating.js';
+import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 
-const APP_VERSION = '5'; // keep in step with CACHE in sw.js
+const APP_VERSION = '6'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -15,7 +17,7 @@ const DEFAULT_INPUTS = {
 };
 
 const S = {
-  tab: 'water', picking: false, kb: null, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
+  tab: 'water', picking: false, kb: null, favScores: {}, noaaFc: null, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -64,9 +66,9 @@ function gps() {
 // ---------- data loading ----------
 
 async function loadKB() {
-  const [hatches, flies, steelhead] = await Promise.all(
-    ['hatches', 'flies', 'steelhead'].map((n) => fetch(`knowledge/${n}.json`).then((r) => r.json())));
-  return { hatches, flies, steelhead };
+  const [hatches, flies, steelhead, rating] = await Promise.all(
+    ['hatches', 'flies', 'steelhead', 'rating'].map((n) => fetch(`knowledge/${n}.json`).then((r) => r.json())));
+  return { hatches, flies, steelhead, rating };
 }
 
 async function selectSite(basic) {
@@ -102,6 +104,7 @@ async function selectSite(basic) {
   S.loading = '';
   saveSession();
   render();
+  if (S.site.lat != null) loadNoaa(S.site);
 }
 
 async function findNearMe() {
@@ -158,6 +161,7 @@ async function tripPrep() {
   S.prep = `Saved ${ok} of ${S.favorites.length} rivers for offline use (${new Date().toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}).`;
   store.set('prepMsg', S.prep);
   render();
+  updateFavScores();
 }
 
 // ---------- conditions → engine ----------
@@ -171,23 +175,122 @@ function manualWeather() {
 }
 
 function currentConditions() {
+  return S.manual ? condFor(null, S.wx, null, true) : condFor(S.site, S.wx, S.flow, true);
+}
+
+// Engine input for a gauge (or manual mode when site is null), using "Your spot" choices.
+// useOverride: apply the thermometer reading (only for the river you're actually on).
+function condFor(site, wx, flow, useOverride) {
   const i = S.inputs;
-  const override = i.tempOverride !== '' && !isNaN(+i.tempOverride) ? Math.round(+i.tempOverride) : null;
-  const site = S.manual ? null : S.site;
+  const override = useOverride && i.tempOverride !== '' && !isNaN(+i.tempOverride) ? Math.round(+i.tempOverride) : null;
   let waterTempF = override, tempSource = override != null ? 'your reading' : null;
   if (waterTempF == null && site && site.waterTempF != null) { waterTempF = site.waterTempF; tempSource = 'gauge'; }
-  const sun = sunFor(S.wx);
+  const sun = sunFor(wx);
   const lon = site ? site.lon : S.gps ? S.gps.lon : null;
   return {
     species: i.species, clarity: i.clarity, waterType: i.waterType, depthFt: +i.depthFt,
     waterTempF, tempSource,
-    flowBand: S.manual ? (i.flowBand === 'unknown' ? null : i.flowBand) : S.flow && S.flow.band,
-    flowTrend: S.manual ? i.trend : site && site.trend,
-    weather: S.manual || !S.wx ? (S.manual ? manualWeather() : null) : S.wx,
+    flowBand: site ? flow && flow.band : (i.flowBand === 'unknown' ? null : i.flowBand),
+    flowTrend: site ? site.trend : i.trend,
+    weather: site ? wx || null : manualWeather(),
     sunrise: sun.sunrise, sunset: sun.sunset,
     region: regionFor(lon),
     now: new Date(),
   };
+}
+
+// ---------- conditions score ----------
+
+const minScore = () => (S.gear.minScore != null ? S.gear.minScore : S.kb.rating.defaultMinScore);
+
+function currentRating() {
+  if (!S.kb || (!S.site && !S.manual)) return null;
+  return rateConditions(currentConditions(), S.kb);
+}
+
+// Today (actual conditions) plus the next 3 days (forecast). Site mode only.
+function forecastRatings() {
+  if (S.manual || !S.wx || !S.wx.days || !S.wx.days.length) return [];
+  const base = currentConditions();
+  const days = S.wx.days.slice(0, 4);
+  const avg = (d) => (d.max + d.min) / 2;
+  const month = new Date().getMonth() + 1;
+  const baseT = base.waterTempF != null ? base.waterTempF : estimateWaterTempF(S.wx.past3AvgAirF, month);
+  const worse = { clear: 'slight', slight: 'stained', stained: 'muddy', muddy: 'muddy' };
+  return days.map((d, i) => {
+    if (i === 0) return { date: d.date, rating: currentRating(), src: 'now', notes: [], code: d.code, max: d.max, min: d.min };
+    const date = new Date(`${d.date}T13:00`);
+    // Water temp follows air temp slowly.
+    const waterTempF = Math.round(Math.max(33, Math.min(80, baseT + 0.35 * (avg(d) - avg(days[0])))));
+    let flowBandX = base.flowBand, trend = 'steady', src = 'weather', clarity = base.clarity;
+    const notes = [];
+    const fc = S.noaaFc && S.noaaFc[d.date];
+    if (fc != null && S.stats) {
+      const fbx = flowBand(fc, S.stats, date);
+      if (fbx) { flowBandX = fbx.band; src = 'noaa'; notes.push(`NOAA forecast: ${fc.toLocaleString()} cfs`); }
+      const prev = S.noaaFc[days[i - 1].date];
+      if (prev) trend = fc > prev * 1.08 ? 'rising' : fc < prev * 0.92 ? 'falling' : 'steady';
+    }
+    const prevRain = days[i - 1].precip || 0, rain = d.precip || 0;
+    if (prevRain >= 0.5 || rain >= 0.75) {
+      clarity = worse[clarity];
+      if (src !== 'noaa') trend = 'rising';
+      notes.push(`Heavy rain (${Math.max(prevRain, rain).toFixed(1)} in) may raise and color the river`);
+    }
+    const cloud = d.code <= 1 ? 15 : d.code === 2 ? 50 : 90;
+    const cond = {
+      ...base, now: date, tod: 'afternoon', waterTempF, tempEstimated: true, flowBand: flowBandX, flowTrend: trend, clarity,
+      weather: { cloud, precip: d.code >= 51 ? 0.05 : 0, windMph: null, pressureTrend: 'steady', airF: d.max },
+    };
+    return { date: d.date, rating: rateConditions(cond, S.kb), src, notes, code: d.code, max: d.max, min: d.min };
+  });
+}
+
+// Scores for saved rivers, from saved data. Refreshes stale data in the background when online.
+let favRefreshing = false;
+async function updateFavScores(forceFetch = false) {
+  if (favRefreshing || !S.favorites.length || !S.kb) return;
+  favRefreshing = true;
+  try {
+    for (const f of S.favorites) {
+      let site = await store.get(`site:${f.id}`);
+      let wx = await store.get(`wx:${f.id}`);
+      let stats = await store.get(`stats:${f.id}`);
+      const stale = !site || !site.fetchedAt || Date.now() - site.fetchedAt > 30 * 60e3;
+      if (navigator.onLine && (stale || forceFetch)) {
+        try {
+          const d = await getSite(f.id);
+          site = { ...f, ...d, name: f.name, fetchedAt: Date.now() };
+          await store.set(`site:${f.id}`, site);
+          if (!stats) { stats = await getFlowStats(f.id); if (stats) await store.set(`stats:${f.id}`, stats); }
+          wx = await getWeather(f.lat, f.lon); await store.set(`wx:${f.id}`, wx);
+        } catch (e) { /* keep saved data */ }
+      }
+      if (!site) { S.favScores[f.id] = null; continue; }
+      const r = rateConditions(condFor(site, wx, flowBand(site.cfs, stats), false), S.kb);
+      S.favScores[f.id] = { ...r, at: site.fetchedAt };
+      if (S.tab === 'water' && isPicking()) render();
+    }
+  } finally { favRefreshing = false; }
+}
+
+async function loadNoaa(site) {
+  S.noaaFc = null;
+  try {
+    const key = `noaa:${site.id}`;
+    let info = await store.get(key);
+    if (!info || Date.now() - info.checkedAt > 7 * 864e5) {
+      info = { lid: await findNoaaGauge(site.id, site.lat, site.lon), checkedAt: Date.now() };
+      await store.set(key, info);
+    }
+    if (info.lid) {
+      S.noaaFc = await getFlowForecast(info.lid);
+      if (S.noaaFc) store.set(`noaafc:${site.id}`, S.noaaFc);
+    }
+  } catch (e) {
+    S.noaaFc = await store.get(`noaafc:${site.id}`);
+  }
+  if (S.noaaFc && S.site && S.site.id === site.id && S.tab === 'water' && !isPicking()) render();
 }
 
 // ---------- screens ----------
@@ -229,8 +332,12 @@ function viewPicker() {
       <span class="meta">${s.dist != null ? `${s.dist.toFixed(1)} mi` : '›'}</span></button></li>`).join('')}</ul>` : `<p class="muted">${S.query ? 'No live gauges found. Try a shorter name (e.g. "Pere Marquette"), or a nearby town like "Baldwin, MI".' : 'No gauges found nearby.'}</p>`;
   }
   if (S.favorites.length) {
-    h += `<h3>★ Saved rivers</h3><ul class="site-list">${S.favorites.map((f, k) =>
-      `<li><button data-act="fav" data-k="${k}"><span class="nm">${esc(f.name)}</span><span class="meta">›</span></button></li>`).join('')}</ul>
+    const min = minScore();
+    h += `<h3>★ Saved rivers</h3><ul class="site-list">${S.favorites.map((f, k) => {
+      const sc = S.favScores[f.id];
+      const badge = sc ? `<span class="chip-score lvl-${sc.level}${sc.score < min ? ' below' : ''}">${sc.score}</span>` : '<span class="meta">›</span>';
+      return `<li><button data-act="fav" data-k="${k}"><span><span class="nm">${esc(f.name)}</span>${sc ? `<br><span class="small muted">${esc(sc.label)} · ${ago(sc.at)}</span>` : ''}</span>${badge}</button></li>`;
+    }).join('')}</ul>
       <button style="width:100%;margin-top:8px" data-act="prep">⬇️ Download saved rivers for offline</button>
       ${S.prep ? `<p class="small muted">${esc(S.prep)}</p>` : ''}`;
   }
@@ -257,9 +364,46 @@ function viewSelectedBar() {
     ${star}<button class="selchange" data-act="change">Change</button></div>`;
 }
 
+// Circular score gauge.
+function scoreRing(score, level, size = 76) {
+  const r = 32, c = 2 * Math.PI * r, off = c * (1 - Math.max(0, Math.min(100, score)) / 100);
+  return `<svg class="ring lvl-${level}" width="${size}" height="${size}" viewBox="0 0 80 80" role="img" aria-label="Score ${score} out of 100">
+    <circle cx="40" cy="40" r="${r}" fill="none" stroke="var(--line)" stroke-width="8"/>
+    <circle cx="40" cy="40" r="${r}" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"
+      stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" transform="rotate(-90 40 40)"/>
+    <text x="40" y="47" text-anchor="middle" font-size="22" font-weight="800" fill="var(--ink)">${score}</text></svg>`;
+}
+
+function viewScore() {
+  const r = currentRating();
+  if (!r) return '';
+  const min = minScore();
+  let h = `<div class="card score-card">
+    <div class="score-row">${scoreRing(r.score, r.level)}
+      <div><div class="score-label lvl-${r.level}">${esc(r.label)} <span class="muted small">· ${r.score}/100</span></div>
+      <div class="small">${esc(r.summary)}</div></div></div>`;
+  if (r.score < min) h += `<div class="alert caution" style="margin:10px 0 0">Below your minimum of ${min}. Probably not worth the trip today.</div>`;
+  h += `<details class="more"><summary>How this score works</summary>
+    ${r.factors.map((f) => `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts}/${f.max}</b></div>
+      <div class="bar"><span style="width:${Math.round(f.frac * 100)}%"></span></div><div class="small muted">${esc(f.note)}</div></div>`).join('')}
+    <p class="small muted">Scores use your "Your spot" choices below (species and clarity matter most). Tune the weights in knowledge/rating.json.</p></details>`;
+  const fc = forecastRatings();
+  if (fc.length > 1) {
+    const dayName = (d, i) => (i === 0 ? 'Today' : new Date(`${d}T12:00`).toLocaleDateString([], { weekday: 'short' }));
+    h += `<h3>Next few days</h3><div class="fc">${fc.map((d, i) => `<div class="${d.rating.score >= min ? '' : 'below'}">
+      <b>${dayName(d.date, i)}</b><br><span class="chip-score lvl-${d.rating.level}">${d.rating.score}</span><br>
+      <span class="small">${d.max}°/${d.min}°</span><br><span class="muted small">${esc(codeText(d.code))}</span></div>`).join('')}</div>`;
+    const notes = fc.flatMap((d, i) => d.notes.map((n) => `${dayName(d.date, i)}: ${n}`));
+    const noaa = fc.some((d) => d.src === 'noaa');
+    h += `<p class="small muted" style="margin:8px 0 0">${notes.map(esc).join('<br>')}${notes.length ? '<br>' : ''}Future days: ${noaa ? 'NOAA river forecast plus' : 'no NOAA flow forecast for this gauge right now, so based on'} the weather forecast. Water temps are estimated.</p>`;
+  }
+  return h + `</div>`;
+}
+
 function viewChosen() {
   const i = S.inputs;
   let h = viewSelectedBar();
+  if (!S.loading) h += viewScore();
   if (S.manual) h += viewManual();
   else if (!S.loading) h += viewConditions();
   {
@@ -297,9 +441,6 @@ function viewConditions() {
   }
   h += `</div>`;
   if (fl) h += `<p class="small muted" style="margin:8px 0 0">Normal for today: ${Math.round(fl.p25)}–${Math.round(fl.p75)} cfs (median ${Math.round(fl.p50)}).</p>`;
-  if (wx && wx.days && wx.days.length > 1) {
-    h += `<div class="fc">${wx.days.slice(0, 4).map((d) => `<div><b>${new Date(d.date + 'T12:00').toLocaleDateString([], { weekday: 'short' })}</b><br>${d.max}°/${d.min}°<br><span class="muted">${esc(codeText(d.code))}</span></div>`).join('')}</div>`;
-  }
   if (wx) h += `<p class="small muted" style="margin:8px 0 0">Weather updated ${ago(wx.fetchedAt)}.</p>`;
   return h + `</div>`;
 }
@@ -326,7 +467,9 @@ function viewSetups() {
   lastResult = r;
   const c = r.cond;
   const tempSrc = cond.tempSource || (c.tempEstimated ? 'estimated' : '');
-  let h = `<div class="card small"><b>${esc(S.manual ? 'Manual conditions' : S.site.name)}</b><br>
+  const rt = rateConditions(cond, S.kb);
+  let h = `<div class="card small"><div class="site-head"><b>${esc(S.manual ? 'Manual conditions' : S.site.name)}</b>
+    <span class="chip-score lvl-${rt.level}" title="Conditions score">${rt.score}</span></div>
     ${c.species === 'steelhead' ? 'Steelhead / salmon' : 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${c.clarity} · ${c.waterType} ${c.depthFt} ft · ${c.tod}</div>`;
   for (const w of r.warnings) h += `<div class="alert ${w.level}">${w.level === 'stop' ? '🛑 ' : '⚠️ '}${esc(w.text)}</div>`;
   if (r.notes.length) h += `<div class="card"><h2>Reading the river</h2><ul class="notes">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>`;
@@ -501,6 +644,11 @@ function viewGear() {
       <select id="rtype"><option value="single">Single-hand</option><option value="euro">Euro nymph</option><option value="switch">Switch</option><option value="spey">Spey</option></select>
     </div>
     <p style="margin:10px 0 0"><button style="width:100%" data-act="addrod">+ Add rod</button></p></div>
+  <div class="card"><h2>Minimum score to fish</h2>
+    <p class="small muted" style="margin-top:0">Rivers and days scoring below this get flagged as probably not worth the trip.</p>
+    <label class="field">Minimum: <span id="minv">${minScore()}</span> / 100</label>
+    <input type="range" min="0" max="100" step="5" value="${minScore()}" data-gear="minScore">
+    <p class="small muted" style="margin:4px 0 0">${S.kb.rating.labels.map((l) => `${l.min}+ ${l.label}`).join(' · ')}</p></div>
   ${viewFlyBox()}
   ${viewBoxPhotos()}
   <div class="card small muted">Fly Buddy uses free public data: USGS river gauges and Open-Meteo weather. All advice comes from built-in rules, with no paid services. Your data stays on this phone.<br><br>App version ${APP_VERSION}</div>`;
@@ -564,7 +712,7 @@ $app.addEventListener('click', async (e) => {
     S.picking = false; window.scrollTo(0, 0);
     selectSite((act === 'pick' ? S.nearby : S.favorites)[+b.dataset.k]);
   }
-  else if (act === 'change') { S.picking = true; S.query = ''; render(); window.scrollTo(0, 0); }
+  else if (act === 'change') { S.picking = true; S.query = ''; render(); window.scrollTo(0, 0); updateFavScores(); }
   else if (act === 'back') { S.picking = false; render(); window.scrollTo(0, 0); }
   else if (act === 'clearq') { S.query = ''; S.nearby = null; S.nearbyTitle = ''; render(); document.getElementById('q').focus(); }
   else if (act === 'star') {
@@ -572,6 +720,7 @@ $app.addEventListener('click', async (e) => {
     if (i >= 0) S.favorites.splice(i, 1); else S.favorites.push({ id: s.id, name: s.name, lat: s.lat, lon: s.lon });
     await store.set('favorites', S.favorites); render();
     toast(i >= 0 ? 'Removed from saved rivers' : 'Saved. Use "Download for offline" before you lose signal.');
+    updateFavScores();
   }
   else if (act === 'prep') tripPrep();
   else if (act === 'set') {
@@ -645,6 +794,10 @@ $app.addEventListener('input', (e) => {
     saveSession();
   } else if (el.dataset.log) {
     S.logDraft[el.dataset.log] = el.value;
+  } else if (el.dataset.gear === 'minScore') {
+    S.gear.minScore = +el.value;
+    document.getElementById('minv').textContent = el.value;
+    store.set('gear', S.gear);
   } else if (el.dataset.boxlabel) {
     S.boxPhotos[+el.dataset.boxlabel].label = el.value;
     store.set('boxPhotos', S.boxPhotos);
@@ -664,6 +817,8 @@ $app.addEventListener('change', async (e) => {
     S.boxPhotos.push({ photo, label: `Box ${S.boxPhotos.length + 1}`, date: Date.now() });
     await store.set('boxPhotos', S.boxPhotos); render(); toast('Photo saved');
   }
+  // The score depends on the thermometer reading; refresh once the user finishes typing.
+  if (el.dataset.in === 'tempOverride') { const y = window.scrollY; render(); window.scrollTo(0, y); }
   if (el.dataset.act === 'import' && el.files[0]) {
     try {
       const j = JSON.parse(await el.files[0].text());
@@ -708,8 +863,9 @@ window.addEventListener('offline', render);
   if (sess) {
     S.inputs = { ...DEFAULT_INPUTS, ...sess.inputs };
     S.manual = !!sess.manual;
-    if (sess.site) { selectSite(sess.site); return; }
+    if (sess.site) { selectSite(sess.site); updateFavScores(); return; }
     if (S.manual) { S.wx = await store.get('wx:gps'); }
   }
   render();
+  updateFavScores();
 })();

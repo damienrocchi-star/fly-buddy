@@ -68,6 +68,18 @@ export function scoreHatches(hatches, c) {
 // ---------- main entry ----------
 
 export function recommend(cond, kb, gear = {}, catches = []) {
+  const c = prepare(cond);
+  const out = c.species === 'steelhead' ? steelhead(c, kb, gear) : trout(c, kb, gear);
+  applyHistory(out.setups, c, catches);
+  markOwnedFlies(out.setups, gear);
+  out.setups.sort((a, b) => b.score - a.score);
+  out.cond = c;
+  out.fromBox = buildFromBox(out, c, kb, gear);
+  return out;
+}
+
+// Fill defaults and derive time of day, sky, water speed etc. Shared with the conditions score.
+export function prepare(cond) {
   const now = cond.now || new Date();
   const c = {
     ...cond,
@@ -86,14 +98,7 @@ export function recommend(cond, kb, gear = {}, catches = []) {
   }
   c.speed = speedIndex(c.waterType, c.flowBand);
   c.lowLight = c.tod === 'dawn' || c.tod === 'evening' || c.sky.has('overcast');
-
-  const out = c.species === 'steelhead' ? steelhead(c, kb, gear) : trout(c, kb, gear);
-  applyHistory(out.setups, c, catches);
-  markOwnedFlies(out.setups, gear);
-  out.setups.sort((a, b) => b.score - a.score);
-  out.cond = c;
-  out.fromBox = buildFromBox(out, c, kb, gear);
-  return out;
+  return c;
 }
 
 // ---------- "from your fly box" ----------
