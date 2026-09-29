@@ -150,6 +150,9 @@ input[type=range] { width: 100%; accent-color: var(--brand); height: 32px; }
 .bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; margin: 4px 0 2px; }
 .bar span { display: block; height: 100%; background: var(--brand); }
 .site-list .chip-score { align-self: center; flex: none; }
+.claude-card { border: 2px solid #c96442; }
+.claude-card .rank { color: #c96442; }
+.answer-text { white-space: pre-wrap; font-size: 15px; line-height: 1.5; }
 .boxsetup { border: 2px dashed var(--brand); }
 .setup .rank { font-size: 13px; font-weight: 800; color: var(--accent); text-transform: uppercase; letter-spacing: .5px; }
 .setup h2 { font-size: 21px; margin: 2px 0 6px; }

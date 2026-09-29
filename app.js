@@ -6,7 +6,7 @@ import { recommend, regionFor, estimateWaterTempF } from './engine/recommend.js'
 import { rateConditions } from './engine/rating.js';
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 
-const APP_VERSION = '6'; // keep in step with CACHE in sw.js
+const APP_VERSION = '7'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -101,6 +101,7 @@ async function selectSite(basic) {
     S.wx = await store.get(`wx:${id}`); S.offline = true;
   }
   S.flow = flowBand(S.site.cfs, S.stats);
+  await loadClaudeAnswers();
   S.loading = '';
   saveSession();
   render();
@@ -470,15 +471,152 @@ function viewSetups() {
   const rt = rateConditions(cond, S.kb);
   let h = `<div class="card small"><div class="site-head"><b>${esc(S.manual ? 'Manual conditions' : S.site.name)}</b>
     <span class="chip-score lvl-${rt.level}" title="Conditions score">${rt.score}</span></div>
-    ${c.species === 'steelhead' ? 'Steelhead / salmon' : 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${c.clarity} · ${c.waterType} ${c.depthFt} ft · ${c.tod}</div>`;
+    ${c.species === 'steelhead' ? 'Steelhead / salmon' : 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${c.clarity} · ${c.waterType} ${c.depthFt} ft · ${c.tod}
+    <p style="margin:8px 0 0"><button class="linkish" data-act="toask">💬 Ask Claude about these conditions</button></p></div>`;
   for (const w of r.warnings) h += `<div class="alert ${w.level}">${w.level === 'stop' ? '🛑 ' : '⚠️ '}${esc(w.text)}</div>`;
   if (r.notes.length) h += `<div class="card"><h2>Reading the river</h2><ul class="notes">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>`;
+  h += viewClaudeAnswers();
 
   const top = r.setups.slice(0, 3), rest = r.setups.slice(3);
   top.forEach((s, k) => { h += setupCard(s, k); });
   h += fromBoxCard(r.fromBox);
   if (rest.length) h += `<details class="more card"><summary>More options (${rest.length})</summary>${rest.map((s, k) => setupCard(s, k + 3, true)).join('')}</details>`;
+  h += viewAskClaude();
   return h;
+}
+
+// ---------- Ask Claude (hand-off to the user's own Claude app; no API, no cost) ----------
+
+const CLAUDE_NEW = 'https://claude.ai/new?q=';
+const ASK_CHIPS = [
+  'Why is this the best setup today?',
+  'Fish are rising but refusing my fly. What should I change?',
+  'Where on the river should I focus at this flow?',
+  'I\'m not getting any takes. What should I try next?',
+];
+const answerKey = () => `claude:${S.manual ? 'manual' : S.site ? S.site.id : 'none'}`;
+
+function buildPrompt(question) {
+  const r = lastResult, c = r.cond, cond = currentConditions();
+  const rt = rateConditions(cond, S.kb);
+  const lines = [];
+  lines.push("I'm fly fishing and using my Fly Buddy app. Here are my current conditions and the app's suggestions.");
+  lines.push('');
+  lines.push(`My question: ${question || 'What would you fish right now, and how?'}`);
+  lines.push('');
+  lines.push('CONDITIONS');
+  if (S.manual) lines.push('- River: entered by hand (no gauge)');
+  else {
+    lines.push(`- River: ${S.site.name} (USGS gauge ${S.site.id})`);
+    if (S.site.cfs != null) lines.push(`- Flow: ${Math.round(S.site.cfs)} cfs${S.flow ? `, ${S.flow.band} (${S.flow.pct}% of normal for today)` : ''}${S.site.trend ? `, ${S.site.trend}` : ''}`);
+  }
+  if (S.manual) lines.push(`- Flow: ${cond.flowBand || 'unknown'} compared with normal, ${c.flowTrend || 'trend unknown'}`);
+  lines.push(`- Water temp: ${c.waterTempF}°F (${cond.tempSource || 'estimated'})`);
+  const wx = S.manual ? null : S.wx;
+  if (wx) lines.push(`- Weather: ${wx.airF}°F air, ${codeText(wx.code).toLowerCase()}, ${wx.cloud}% cloud, wind ${wx.windMph} mph, barometer ${wx.pressureTrend}`);
+  else if (S.manual) lines.push(`- Weather: ${S.inputs.sky}, ${S.inputs.wind}, barometer ${S.inputs.pressure}`);
+  lines.push(`- Date/time: ${new Date().toLocaleString([], { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${c.tod}), region: ${c.region === 'west' ? 'western US' : 'eastern/midwest US'}`);
+  lines.push(`- Target: ${c.species === 'steelhead' ? 'steelhead / salmon' : 'trout'}; water clarity: ${c.clarity}; fishing a ${c.waterType} about ${c.depthFt} ft deep`);
+  lines.push(`- App's conditions score: ${rt.score}/100 (${rt.label})`);
+  if (r.hatches && r.hatches.length) lines.push(`- Likely hatches: ${r.hatches.map((x) => x.h.name).join(', ')}`);
+  if (r.warnings.length) lines.push(`- Warnings: ${r.warnings.map((w) => w.text).join(' ')}`);
+  lines.push('');
+  lines.push("APP'S TOP SETUPS");
+  r.setups.slice(0, 3).forEach((s, i) => {
+    const rig = s.rig.filter((p) => ['leader', 'tippet', 'indicator', 'shot', 'sinktip'].includes(p.kind)).map((p) => p.label).join('; ');
+    lines.push(`${i + 1}. ${s.title}: ${s.rod.text}; ${rig}; flies: ${s.flies.slice(0, 3).map((f) => f.name).join(', ')}`);
+  });
+  lines.push('');
+  lines.push('MY GEAR');
+  lines.push(`- Rods: ${S.gear.rods.length ? S.gear.rods.map((g) => `${g.len}ft ${g.wt}wt ${g.type}`).join(', ') : 'not listed'}`);
+  lines.push(`- Fly box: ${S.gear.flies.length ? S.gear.flies.slice(0, 60).join(', ') : 'not listed'}`);
+  lines.push('');
+  lines.push('Please answer briefly and practically, favouring flies I already carry. At the very end, add this block exactly, filled in, so I can paste it back into my app:');
+  lines.push('FLYBUDDY-START');
+  lines.push('title: <short name for your recommended setup>');
+  lines.push('fly: <pattern and size>  (one line per fly, top to bottom)');
+  lines.push('rig: <line / leader / tippet / indicator depth or sink tip>  (one line per item)');
+  lines.push('tip: <one short tip>  (up to 3 lines)');
+  lines.push('FLYBUDDY-END');
+  return lines.join('\n');
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall back */ }
+  try {
+    const t = document.createElement('textarea');
+    t.value = text; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select(); const ok = document.execCommand('copy'); t.remove(); return ok;
+  } catch (e) { return false; }
+}
+
+// Pull the FLYBUDDY block out of Claude's reply. Works even if the block got markdown-formatted.
+function parseAnswer(text) {
+  const clean = text.replace(/\r/g, '');
+  const m = /FLYBUDDY-START([\s\S]*?)FLYBUDDY-END/i.exec(clean);
+  const out = { title: '', flies: [], rig: [], tips: [], text: clean.replace(/`{3}[a-z]*\n?|`{3}/g, '').trim(), structured: !!m };
+  if (m) {
+    for (let line of m[1].split('\n')) {
+      line = line.replace(/^[\s*\-•`]+|[`*]+$/g, '').trim();
+      const kv = /^(title|fly|rig|tip)\s*:\s*(.+)$/i.exec(line);
+      if (!kv) continue;
+      const k = kv[1].toLowerCase(), v = kv[2].replace(/\*\*/g, '').trim();
+      if (k === 'title') out.title = v; else if (k === 'fly') out.flies.push(v); else if (k === 'rig') out.rig.push(v); else out.tips.push(v);
+    }
+    out.text = clean.slice(0, m.index).replace(/`{3}[a-z]*\n?|`{3}/g, '').trim();
+  }
+  return out;
+}
+
+function viewAskClaude() {
+  const q = S.askQ || '';
+  return `<div class="card" id="ask"><h2>💬 Ask Claude</h2>
+    <p class="small muted" style="margin-top:0">Opens Claude on this phone with today's conditions, the setups above and your gear already filled in. It uses your own Claude account (a free account works), with no cost to the app.</p>
+    <div class="chips">${ASK_CHIPS.map((t) => `<button class="chip" data-act="askchip" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+    <textarea id="askq" style="min-height:80px" placeholder="Or type your own question…">${esc(q)}</textarea>
+    <p style="margin:10px 0 0"><button class="btn-primary" data-act="ask">Ask Claude ↗</button></p>
+    <p class="small" style="margin:8px 0 0"><button class="linkish" data-act="askcopy">Copy for another chatbot</button></p>
+    <h3>Got an answer?</h3>
+    <p class="small muted" style="margin-top:0">In Claude, tap <b>Copy</b> under the answer, then come back and paste it here. I'll pull out the setup and save it for this river.</p>
+    <textarea id="answer" style="min-height:90px" placeholder="Paste Claude's answer here"></textarea>
+    <div class="btn-row" style="margin-top:10px"><button data-act="pasteclip">📋 Paste from clipboard</button><button data-act="saveanswer">Save answer</button></div>
+  </div>`;
+}
+
+function viewClaudeAnswers() {
+  const list = S.claudeAnswers || [];
+  if (!list.length) return '';
+  const card = (a, k) => `<div class="card claude-card">
+    <div class="rank">💬 Claude's suggestion · ${ago(a.at)}</div>
+    <h2>${esc(a.title || 'Claude\'s advice')}</h2>
+    ${a.question ? `<p class="small muted" style="margin:0 0 8px">You asked: ${esc(a.question)}</p>` : ''}
+    ${a.flies.length ? `<h3>Flies</h3><ul class="fly-list">${a.flies.map((f) => `<li><span>${ownedFly(f) ? '<span class="own">✓ </span>' : ''}${esc(f)}</span></li>`).join('')}</ul>` : ''}
+    ${a.rig.length ? `<h3>Rig</h3><ul class="notes">${a.rig.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${a.tips.length ? `<h3>Tips</h3><ul class="notes">${a.tips.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+    ${a.text ? `<details class="more"><summary>${a.structured ? 'Claude\'s full answer' : 'Claude\'s answer'}</summary><div class="answer-text">${esc(a.text)}</div></details>` : ''}
+    <div class="btn-row" style="margin-top:10px">${a.flies.length ? `<button data-act="logclaude" data-k="${k}">🐟 Log a catch on this</button>` : ''}<button class="linkish danger" data-act="delanswer" data-k="${k}">Remove</button></div>
+  </div>`;
+  let h = card(list[0], 0);
+  if (list.length > 1) h += `<details class="more card"><summary>Earlier Claude answers for this river (${list.length - 1})</summary>${list.slice(1).map((a, i) => card(a, i + 1)).join('')}</details>`;
+  return h;
+}
+
+function ownedFly(name) {
+  const key = name.toLowerCase().split(/[#(]/)[0].replace(/\s+\d.*$/, '').trim();
+  return S.gear.flies.some((f) => { const b = f.toLowerCase(); return b === key || (b.length >= 5 && (key.includes(b) || b.includes(key))); });
+}
+
+async function loadClaudeAnswers() {
+  S.claudeAnswers = await store.get(answerKey(), []);
+}
+
+async function saveAnswer(text) {
+  if (!text || !text.trim()) { toast('Paste Claude\'s answer first.'); return; }
+  const a = { ...parseAnswer(text), at: Date.now(), question: S.lastAskQ || '' };
+  S.claudeAnswers = [a, ...(S.claudeAnswers || [])].slice(0, 5);
+  await store.set(answerKey(), S.claudeAnswers);
+  render(); window.scrollTo(0, 0);
+  toast(a.structured ? 'Claude\'s setup saved for this river' : 'Saved. (No setup block found, so I kept the full answer.)');
 }
 
 function fromBoxCard(fb) {
@@ -706,7 +844,11 @@ $app.addEventListener('click', async (e) => {
   if (!b || b.type === 'file') return;
   const act = b.dataset.act;
   if (act === 'near') findNearMe();
-  else if (act === 'manual') { S.picking = false; S.manual = true; S.site = null; S.wx = null; S.flow = null; saveSession(); render(); window.scrollTo(0, 0); if (navigator.onLine) manualWeatherFromGps(); }
+  else if (act === 'manual') {
+    S.picking = false; S.manual = true; S.site = null; S.wx = null; S.flow = null; saveSession();
+    await loadClaudeAnswers(); render(); window.scrollTo(0, 0);
+    if (navigator.onLine) manualWeatherFromGps();
+  }
   else if (act === 'pick' || act === 'fav') {
     // Switch straight to the "chosen" view so the tap is obviously registered.
     S.picking = false; window.scrollTo(0, 0);
@@ -730,6 +872,41 @@ $app.addEventListener('click', async (e) => {
   }
   else if (act === 'go') { S.tab = 'setups'; render(); window.scrollTo(0, 0); }
   else if (act === 'logthis') startLog(b.dataset.key, !!b.dataset.box);
+  else if (act === 'toask') document.getElementById('ask').scrollIntoView({ behavior: 'smooth' });
+  else if (act === 'askchip') { const t = document.getElementById('askq'); t.value = b.dataset.v; S.askQ = b.dataset.v; }
+  else if (act === 'ask' || act === 'askcopy') {
+    const q = document.getElementById('askq').value.trim();
+    S.lastAskQ = q;
+    const prompt = buildPrompt(q);
+    // Start both inside the tap so the phone allows them: copy (fallback) and open Claude.
+    const copied = copyText(prompt);
+    if (act === 'ask') {
+      const url = CLAUDE_NEW + encodeURIComponent(prompt);
+      window.open(url.length < 12000 ? url : 'https://claude.ai/new', '_blank');
+      toast('Opening Claude… The details are also copied. If the message box is empty, paste them in.');
+    } else {
+      toast((await copied) ? 'Copied. Paste it into any chatbot.' : 'Could not copy on this phone.');
+    }
+  }
+  else if (act === 'pasteclip') {
+    try {
+      const t = await navigator.clipboard.readText();
+      document.getElementById('answer').value = t;
+      if (t.trim()) saveAnswer(t); else toast('The clipboard is empty. Copy Claude\'s answer first.');
+    } catch (e) { toast('Long-press the box and choose Paste, then tap Save answer.'); }
+  }
+  else if (act === 'saveanswer') saveAnswer(document.getElementById('answer').value);
+  else if (act === 'delanswer') {
+    S.claudeAnswers.splice(+b.dataset.k, 1);
+    await store.set(answerKey(), S.claudeAnswers); render();
+  }
+  else if (act === 'logclaude') {
+    const a = S.claudeAnswers[+b.dataset.k];
+    startLog(null);
+    S.logDraft.fly = a.flies[0];
+    S.logDraft.flyOptions = [...new Set([...a.flies, ...S.logDraft.flyOptions])];
+    render();
+  }
   else if (act === 'newlog') startLog(null);
   else if (act === 'cancellog') { S.logDraft = null; render(); }
   else if (act === 'savelog') {
@@ -794,6 +971,8 @@ $app.addEventListener('input', (e) => {
     saveSession();
   } else if (el.dataset.log) {
     S.logDraft[el.dataset.log] = el.value;
+  } else if (el.id === 'askq') {
+    S.askQ = el.value;
   } else if (el.dataset.gear === 'minScore') {
     S.gear.minScore = +el.value;
     document.getElementById('minv').textContent = el.value;
@@ -864,7 +1043,7 @@ window.addEventListener('offline', render);
     S.inputs = { ...DEFAULT_INPUTS, ...sess.inputs };
     S.manual = !!sess.manual;
     if (sess.site) { selectSite(sess.site); updateFavScores(); return; }
-    if (S.manual) { S.wx = await store.get('wx:gps'); }
+    if (S.manual) { S.wx = await store.get('wx:gps'); await loadClaudeAnswers(); }
   }
   render();
   updateFavScores();
