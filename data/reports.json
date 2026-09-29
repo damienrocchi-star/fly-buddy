@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-09-29T19:30:01.459Z",
+ "fetchedAt": "2026-09-29T20:17:53.729Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: September 23, 2026",
@@ -578,60 +578,10 @@
     }
    ]
   },
-  "https://westmichiganguides.com/pere-marquette-river-fishing-reports": {
-   "name": "West Michigan Guides",
-   "feedUrl": "https://westmichiganguides.com/feed",
-   "items": [
-    {
-     "title": "Wander In Manistee – Lakeshore Food Guide",
-     "date": "2026-06-19T21:03:40.000Z",
-     "url": "https://westmichiganguides.com/lakeshore-food-guide-wander-in-manistee",
-     "excerpt": "Wander In of Manistee offers dining on beautiful Manistee Lake, with live music, boat rentals. Open daily for breakfast, lunch, dinner.",
-     "terms": []
-    },
-    {
-     "title": "Gold N Deals",
-     "date": "2026-06-04T19:11:08.000Z",
-     "url": "https://westmichiganguides.com/gold-n-deals-scottville",
-     "excerpt": "Buy, sell, and trade at Gold N Deals in Scottville. Shop jewelry, tools, collectibles, and furniture near Ludington. Family-owned local business.",
-     "terms": []
-    },
-    {
-     "title": "Tokyo Hibachi & Sushi Bar in the Lakeshore Food Guide",
-     "date": "2025-05-27T18:28:31.000Z",
-     "url": "https://westmichiganguides.com/lakeshore-food-guide-tokyo-hibachi-sushi-bar",
-     "excerpt": "Tokyo Hibachi and Sushi Bar is an Asian Fushion restaurant offering Hibachi, Sushi, Korean dishes, American Food, full bar, and more.",
-     "terms": []
-    },
-    {
-     "title": "Harbor Cafe in the Lakeshore Food Guide",
-     "date": "2025-05-27T16:40:44.000Z",
-     "url": "https://westmichiganguides.com/lakeshore-food-guide-harbor-cafe",
-     "excerpt": "Ludington Harbor Cafe, formerly Brenda's Harbor Cafe, serves breakfast all day and lunchtime favorites. Open 6am-2pm daily.",
-     "terms": []
-    },
-    {
-     "title": "Love Ludington Weekend",
-     "date": "2025-05-19T21:36:32.000Z",
-     "url": "https://westmichiganguides.com/love-ludington-weekend",
-     "excerpt": "Celebrate all things Ludington at Love Ludington Weekend including a street party, art walk, boat blessing, car show, and more!",
-     "terms": []
-    }
-   ]
-  },
   "https://bettsguideservice.com/category/pere-marquette-river-fishing-report/": {
    "name": "Betts Guide Service",
    "feedUrl": "https://bettsguideservice.com/feed/",
    "items": [
-    {
-     "title": "Steelhead Fishing in Grand Rapids, MI 49505",
-     "date": "2026-09-01T06:16:23.000Z",
-     "url": "https://bettsguideservice.com/steelhead-fishing-in-grand-rapids-mi-49505/",
-     "excerpt": "Anyone traveling to greater Grand Rapids area can find a million reasons to wet a line! The city abounds with areas and locations to fish, both lakes and rivers provide ample places to fish. The city is also surrounded by world class salmon and steelhead fishing areas. The “Sixth Street” Fish…",
-     "terms": [
-      "clear water"
-     ]
-    },
     {
      "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
      "date": "2026-08-29T09:18:00.000Z",
@@ -647,13 +597,6 @@
       "white",
       "eggs"
      ]
-    },
-    {
-     "title": "How to select the bait and flies for steelhead trout fishing?",
-     "date": "2026-08-26T10:05:16.000Z",
-     "url": "https://bettsguideservice.com/how-to-select-the-bait-and-beads-for-steelhead-trout-fishing/",
-     "excerpt": "(8/26/26) We are starting to see good numbers of King Salmon on the Big Manistee River below Pine Creek. The holes are starting to load up with fresh Salmon. A few days ago, Manistee Received a decent amount of rain. That, paired with a change in the wind direction, the lake flipped, and brought…",
-     "terms": []
     },
     {
      "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
@@ -677,17 +620,6 @@
       "white",
       "eggs",
       "bead"
-     ]
-    },
-    {
-     "title": "Top 3 Steelhead Facts to Know Before You Start Fishing",
-     "date": "2026-07-21T09:06:36.000Z",
-     "url": "https://bettsguideservice.com/top-3-steelhead-facts-to-know-before-you-start-fishing/",
-     "excerpt": "When it’s Steelhead fishing on your mind, the right way to go would be to know everything there is about the art. This ensures that you can make the best of your time while catching the biggest fish of the day. Steelhead Trout & Rainbow Trout belong to the very same species while sharing similar ……",
-     "terms": [
-      "stones",
-      "spawn",
-      "eggs"
      ]
     }
    ]
@@ -697,15 +629,6 @@
    "feedUrl": "https://bettsguideservice.com/feed/",
    "items": [
     {
-     "title": "Steelhead Fishing in Grand Rapids, MI 49505",
-     "date": "2026-09-01T06:16:23.000Z",
-     "url": "https://bettsguideservice.com/steelhead-fishing-in-grand-rapids-mi-49505/",
-     "excerpt": "Anyone traveling to greater Grand Rapids area can find a million reasons to wet a line! The city abounds with areas and locations to fish, both lakes and rivers provide ample places to fish. The city is also surrounded by world class salmon and steelhead fishing areas. The “Sixth Street” Fish…",
-     "terms": [
-      "clear water"
-     ]
-    },
-    {
      "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
      "date": "2026-08-29T09:18:00.000Z",
      "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
@@ -720,13 +643,6 @@
       "white",
       "eggs"
      ]
-    },
-    {
-     "title": "How to select the bait and flies for steelhead trout fishing?",
-     "date": "2026-08-26T10:05:16.000Z",
-     "url": "https://bettsguideservice.com/how-to-select-the-bait-and-beads-for-steelhead-trout-fishing/",
-     "excerpt": "(8/26/26) We are starting to see good numbers of King Salmon on the Big Manistee River below Pine Creek. The holes are starting to load up with fresh Salmon. A few days ago, Manistee Received a decent amount of rain. That, paired with a change in the wind direction, the lake flipped, and brought…",
-     "terms": []
     },
     {
      "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
@@ -750,17 +666,6 @@
       "white",
       "eggs",
       "bead"
-     ]
-    },
-    {
-     "title": "Top 3 Steelhead Facts to Know Before You Start Fishing",
-     "date": "2026-07-21T09:06:36.000Z",
-     "url": "https://bettsguideservice.com/top-3-steelhead-facts-to-know-before-you-start-fishing/",
-     "excerpt": "When it’s Steelhead fishing on your mind, the right way to go would be to know everything there is about the art. This ensures that you can make the best of your time while catching the biggest fish of the day. Steelhead Trout & Rainbow Trout belong to the very same species while sharing similar ……",
-     "terms": [
-      "stones",
-      "spawn",
-      "eggs"
      ]
     }
    ]
@@ -770,15 +675,6 @@
    "feedUrl": "https://bettsguideservice.com/feed/",
    "items": [
     {
-     "title": "Steelhead Fishing in Grand Rapids, MI 49505",
-     "date": "2026-09-01T06:16:23.000Z",
-     "url": "https://bettsguideservice.com/steelhead-fishing-in-grand-rapids-mi-49505/",
-     "excerpt": "Anyone traveling to greater Grand Rapids area can find a million reasons to wet a line! The city abounds with areas and locations to fish, both lakes and rivers provide ample places to fish. The city is also surrounded by world class salmon and steelhead fishing areas. The “Sixth Street” Fish…",
-     "terms": [
-      "clear water"
-     ]
-    },
-    {
      "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
      "date": "2026-08-29T09:18:00.000Z",
      "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
@@ -793,13 +689,6 @@
       "white",
       "eggs"
      ]
-    },
-    {
-     "title": "How to select the bait and flies for steelhead trout fishing?",
-     "date": "2026-08-26T10:05:16.000Z",
-     "url": "https://bettsguideservice.com/how-to-select-the-bait-and-beads-for-steelhead-trout-fishing/",
-     "excerpt": "(8/26/26) We are starting to see good numbers of King Salmon on the Big Manistee River below Pine Creek. The holes are starting to load up with fresh Salmon. A few days ago, Manistee Received a decent amount of rain. That, paired with a change in the wind direction, the lake flipped, and brought…",
-     "terms": []
     },
     {
      "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
@@ -823,17 +712,6 @@
       "white",
       "eggs",
       "bead"
-     ]
-    },
-    {
-     "title": "Top 3 Steelhead Facts to Know Before You Start Fishing",
-     "date": "2026-07-21T09:06:36.000Z",
-     "url": "https://bettsguideservice.com/top-3-steelhead-facts-to-know-before-you-start-fishing/",
-     "excerpt": "When it’s Steelhead fishing on your mind, the right way to go would be to know everything there is about the art. This ensures that you can make the best of your time while catching the biggest fish of the day. Steelhead Trout & Rainbow Trout belong to the very same species while sharing similar ……",
-     "terms": [
-      "stones",
-      "spawn",
-      "eggs"
      ]
     }
    ]
