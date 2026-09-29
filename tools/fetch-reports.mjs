@@ -68,9 +68,9 @@ async function main() {
         try { items = parseFeed(await get(c), { limit: 5, skip: job.skip, full: true }); } catch (e) { items = []; }
         if (items.length) { feedUrl = c; break; }
       }
-      // Auto-discovered site feeds can include unrelated posts (events, recipes): keep only fishing ones.
-      if (!job.feedUrl) items = items.filter((it) => FISHY.test(`${it.title} ${it.excerpt}`));
-      if (!items.length) throw new Error('no fishing report items');
+      // Auto-discovered site feeds mix in marketing, events and recipes: keep only actual reports.
+      if (!job.feedUrl) items = items.filter((it) => /report/i.test(`${it.title} ${it.url}`) && FISHY.test(`${it.title} ${it.excerpt}`));
+      if (!items.length) { job.noReports = true; throw new Error('no fishing report posts'); }
       // Keep only the matched keywords from the full post (for the app's setup nudges), never the text.
       for (const it of items) {
         if (vocab) it.terms = findTerms(`${it.title}. ${it.full || it.excerpt}`, vocab);
@@ -79,8 +79,10 @@ async function main() {
       out.feeds[key] = { name: job.name, feedUrl, items };
       console.log(`${job.name}: ${items.length} items, latest ${items[0].date?.slice(0, 10)}`);
     } catch (e) {
-      if (prev.feeds && prev.feeds[key]) out.feeds[key] = prev.feeds[key];
-      console.log(`${job.name}: no feed (${e.message})${prev.feeds && prev.feeds[key] ? '; kept previous' : ''}`);
+      // Keep the last good copy if a site is briefly down, but not when the feed simply has no reports.
+      const keep = !job.noReports && prev.feeds && prev.feeds[key];
+      if (keep) out.feeds[key] = prev.feeds[key];
+      console.log(`${job.name}: no feed (${e.message})${keep ? '; kept previous' : ''}`);
     }
   }
 
