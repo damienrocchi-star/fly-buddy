@@ -1,0 +1,39 @@
+# Fetches public fishing reports once a day and saves them to data/reports.json for the app.
+# Free on public repos. Run it by hand from the Actions tab with "Run workflow".
+name: Fishing reports
+
+on:
+  schedule:
+    - cron: '23 11 * * *'   # every day around 7am Eastern
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fishing-reports
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Fetch reports
+        run: node tools/fetch-reports.mjs
+      - name: Save changes
+        run: |
+          git config user.name "fly-buddy-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/reports.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "Nothing new."
+          else
+            git commit -m "Update fishing reports"
+            git pull --rebase
+            git push
+          fi
