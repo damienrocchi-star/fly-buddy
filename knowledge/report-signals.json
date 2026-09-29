@@ -1,0 +1,33 @@
+{
+  "_about": "Words the app looks for in the latest local fishing reports. A match nudges the app's own setups (+10 rank, flies with a mentioned color first) and adds a credited note. Multi-word phrases are matched before single words, and a match is ignored when 'no', 'not', 'without', 'yet to' or 'haven't' comes in the 3 words before it. Setup keys: dry, drydropper, nymph, euro, streamer, softhackle, swing, skate, shnymph, salegg, salstreamer. Edit freely.",
+  "freshDays": 7,
+  "dnrFreshDays": 10,
+  "techniques": [
+    { "label": "streamers", "keys": ["streamer", "salstreamer", "swing"], "words": ["egg sucking leech", "egg-sucking leech", "streamer", "streamers", "woolly bugger", "bugger", "buggers", "sculpin", "sculpins", "leech", "leeches", "articulated", "minnow", "baitfish", "stripping"] },
+    { "label": "egg patterns", "keys": ["nymph", "shnymph", "salegg"], "words": ["egg", "eggs", "bead", "beads", "glo bug", "glo bugs", "spawn", "skein", "sucker spawn", "estaz"] },
+    { "label": "swinging flies", "keys": ["swing", "salstreamer", "softhackle"], "words": ["swing", "swinging", "swung", "spey", "soft hackle", "soft hackles"] },
+    { "label": "nymphing", "keys": ["nymph", "euro", "shnymph"], "words": ["nymph", "nymphs", "nymphing", "indicator", "bobber", "euro", "stonefly nymph", "rubber legs"] },
+    { "label": "dry flies", "keys": ["dry", "drydropper"], "words": ["dry", "dries", "dry fly", "dry flies", "fish rising", "rising fish", "risers", "on top", "surface"] },
+    { "label": "terrestrials", "keys": ["drydropper", "dry"], "words": ["hopper", "hoppers", "terrestrial", "terrestrials", "ants", "beetle", "beetles"] },
+    { "label": "skated flies", "keys": ["skate"], "words": ["skate", "skater", "skaters", "skating", "waking"] }
+  ],
+  "hatches": [
+    { "words": ["hex", "hexes", "hexagenia"], "match": "hex" },
+    { "words": ["bwo", "bwos", "blue wing", "blue winged", "blue-winged", "baetis", "olives"], "match": "olive" },
+    { "words": ["caddis"], "match": "caddis" },
+    { "words": ["hendrickson", "hendricksons"], "match": "hendrickson" },
+    { "words": ["sulphur", "sulphurs", "sulfur", "sulfurs"], "match": "sulphur" },
+    { "words": ["brown drake", "brown drakes"], "match": "brown drake" },
+    { "words": ["isonychia", "isos", "slate drake", "slate drakes"], "match": "isonychia" },
+    { "words": ["trico", "tricos"], "match": "trico" },
+    { "words": ["stonefly", "stoneflies", "stones"], "match": "stone" },
+    { "words": ["midge", "midges"], "match": "midge" },
+    { "words": ["hopper", "hoppers", "terrestrials"], "match": "terrestrial" }
+  ],
+  "colors": ["black", "chartreuse", "pink", "orange", "purple", "white", "olive", "peach", "tan", "red", "yellow", "cream"],
+  "water": [
+    { "note": "high or colored water", "words": ["high water", "running high", "river is high", "rivers are high", "high flows", "blown out", "muddy", "stained", "dirty water", "off color", "off-color", "moderately high"] },
+    { "note": "low, clear water", "words": ["low and clear", "low, clear", "gin clear", "very clear", "clear water", "low water", "running low", "river is low", "low flows"] },
+    { "note": "rising water after rain", "words": ["river is rising", "rivers are rising", "rising water", "heavy rain", "lots of rain", "rain rain"] }
+  ]
+}

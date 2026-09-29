@@ -1,6 +1,6 @@
 // Fishing-conditions score out of 100. Pure rules, no network.
 // Weights and curves live in knowledge/rating.json.
-import { prepare, scoreHatches } from './recommend.js';
+import { prepare, scoreHatches, allHatches, runInfo, monthRange } from './recommend.js';
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 
@@ -27,7 +27,7 @@ export function labelFor(score, rkb) {
 export function rateConditions(cond, kb) {
   const c = prepare(cond);
   const rk = kb.rating;
-  const sp = c.species === 'steelhead' ? rk.steelhead : rk.trout;
+  const sp = rk[c.species] || rk.trout;
   const w = sp.weights;
   const T = c.waterTempF;
   const fb = cond.flowBand || null; // prepare() defaults it to 'normal'; the score wants to know if it's unknown
@@ -72,9 +72,23 @@ export function rateConditions(cond, kb) {
   if (!c.weather) wn.push('no weather data');
   add('weather', 'Weather & light', wf, wn.length ? wn.join(', ') : 'average');
 
+  // Run timing (steelhead and salmon): are the fish actually in this river now?
+  if (w.run) {
+    const ri = runInfo(c.river, c.species, c.month);
+    const note = {
+      peak: () => `${ri.run.label}: peak of the run`,
+      in: () => `${ri.run.label}: fish are in the river`,
+      shoulder: () => `${ri.run.label}: edge of the run (${monthRange(ri.run.months)})`,
+      out: () => `${ri.run.label}: out of season (runs ${monthRange(ri.run.months)})`,
+      none: () => `this river isn't known for ${c.species}`,
+      unknown: () => 'no run information for this river',
+    }[ri.status]();
+    add('run', 'Run timing', rk.run[ri.status], note);
+  }
+
   // Hatch activity (trout only)
   if (w.hatch) {
-    const hs = scoreHatches(kb.hatches.hatches, c);
+    const hs = scoreHatches(allHatches(kb, c.river), c);
     const top = hs[0];
     add('hatch', 'Hatch activity', top ? top.score / 0.9 : 0.3, top && top.score >= 0.35 ? `${top.h.name} likely` : 'little expected');
   }
@@ -85,6 +99,13 @@ export function rateConditions(cond, kb) {
   let cap = null;
   if (T >= sp.stopTempF) { cap = `Water is ${T}°F. Too warm to fish safely.`; score = Math.min(score, 15); }
   else if (c.clarity === 'muddy' && fb === 'very high') { cap = 'Blown out: very high and muddy.'; score = Math.min(score, 25); }
+  else {
+    const rs = runInfo(c.river, c.species || 'trout', c.month).status;
+    if (rs === 'none' || (w.run && rs === 'out')) {
+      cap = rs === 'none' ? `This river isn't known for ${c.species || 'trout'}.` : `The ${c.species} run isn't on right now.`;
+      score = Math.min(score, 20);
+    }
+  }
   score = Math.round(score);
 
   const good = f.filter((x) => x.frac >= 0.85 && !(x.key === 'trend' && c.flowTrend !== 'falling')).sort((a, b) => b.max - a.max).slice(0, 2);

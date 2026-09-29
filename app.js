@@ -2,11 +2,12 @@
 import * as store from './store.js';
 import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi } from './data/usgs.js';
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
-import { recommend, regionFor, estimateWaterTempF } from './engine/recommend.js';
+import { recommend, regionFor, estimateWaterTempF, runInfo, monthRange, allHatches } from './engine/recommend.js';
 import { rateConditions } from './engine/rating.js';
+import { extractSignals } from './engine/report-signals.js';
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 
-const APP_VERSION = '7'; // keep in step with CACHE in sw.js
+const APP_VERSION = '8'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -17,7 +18,8 @@ const DEFAULT_INPUTS = {
 };
 
 const S = {
-  tab: 'water', picking: false, kb: null, favScores: {}, noaaFc: null, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
+  tab: 'water', picking: false, kb: null, favScores: {}, noaaFc: null,
+  profiles: {}, riverNotes: {}, reports: null, profileOpen: false, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -66,9 +68,33 @@ function gps() {
 // ---------- data loading ----------
 
 async function loadKB() {
-  const [hatches, flies, steelhead, rating] = await Promise.all(
-    ['hatches', 'flies', 'steelhead', 'rating'].map((n) => fetch(`knowledge/${n}.json`).then((r) => r.json())));
-  return { hatches, flies, steelhead, rating };
+  const names = ['hatches', 'flies', 'steelhead', 'rating', 'rivers', 'salmon', 'report-signals'];
+  const files = await Promise.all(names.map((n) => fetch(`knowledge/${n}.json`).then((r) => r.json())));
+  return Object.fromEntries(names.map((n, i) => [n, files[i]]));
+}
+
+// ---------- river profiles ----------
+
+// "Pere Marquette River at Scottville, MI" -> "MI"
+const stateOf = (name) => { const m = /(?:,\s*|\s)([A-Z]{2})$/.exec((name || '').trim()); return m ? m[1] : null; };
+
+// The river part of a gauge name, used to key profiles and notes: "pere marquette river|MI".
+function riverKey(site) {
+  if (!site || !site.name) return null;
+  const river = site.name.replace(/,?\s*[A-Z]{2}$/, '')
+    .split(/\s+(?:at|near|nr|below|bl|above|ab|abv|blw|downstream|upstream|@)\s+|,/i)[0].trim().toLowerCase();
+  return `${river}|${stateOf(site.name) || ''}`;
+}
+
+// Built-in profile from knowledge/rivers.json, or one saved on this phone ("Build with Claude").
+function riverProfile(site) {
+  if (!site || !S.kb) return null;
+  const key = riverKey(site);
+  if (key && S.profiles[key]) return { ...S.profiles[key], local: true };
+  const name = (site.name || '').toLowerCase(), st = stateOf(site.name);
+  return S.kb.rivers.rivers.find((p) => (p.sites || []).includes(site.id)
+    || ((!p.state || p.state === st) && (p.match || []).some((m) => name.includes(m))
+      && !(p.exclude || []).some((x) => name.includes(x)))) || null;
 }
 
 async function selectSite(basic) {
@@ -196,6 +222,9 @@ function condFor(site, wx, flow, useOverride) {
     weather: site ? wx || null : manualWeather(),
     sunrise: sun.sunrise, sunset: sun.sunset,
     region: regionFor(lon),
+    river: site ? riverProfile(site) : null,
+    // Latest local reports nudge the setups, but only for the river you're actually on.
+    reportSignals: site && useOverride ? extractSignals(reportsFor(riverProfile(site)), S.kb['report-signals']) : null,
     now: new Date(),
   };
 }
@@ -401,15 +430,43 @@ function viewScore() {
   return h + `</div>`;
 }
 
+// Species chips; fish the river's profile doesn't list are shown faded (still tappable).
+function speciesChips(current, profile) {
+  const opts = [['trout', 'Trout'], ['steelhead', 'Steelhead'], ['salmon', 'Salmon']];
+  return `<div class="chips">${opts.map(([v, l]) => {
+    const absent = profile && !(profile.species || []).includes(v);
+    return `<button class="chip ${current === v ? 'on' : ''} ${absent ? 'absent' : ''}" data-act="set" data-f="species" data-v="${v}"${absent ? ' title="Not known in this river"' : ''}>${l}</button>`;
+  }).join('')}</div>`;
+}
+
+// Banner when a run is on: "🐟 King salmon: peak of the run on the Pere Marquette".
+function viewRunAlert() {
+  if (S.manual || !S.site) return '';
+  const p = riverProfile(S.site);
+  if (!p) return '';
+  const month = new Date().getMonth() + 1, cur = S.inputs.species;
+  const live = ['salmon', 'steelhead'].map((sp) => ({ sp, ri: runInfo(p, sp, month) }))
+    .filter((x) => x.ri.status === 'peak' || x.ri.status === 'in')
+    .sort((a, b) => (a.ri.status === 'peak' ? -1 : 1) - (b.ri.status === 'peak' ? -1 : 1));
+  if (!live.length) return '';
+  return live.map(({ sp, ri }) => {
+    const what = ri.status === 'peak' ? 'peak of the run' : 'fish are in the river';
+    const btn = cur === sp ? '<span class="small">You\'re set up for it ✓</span>'
+      : `<button class="chip on" data-act="set" data-f="species" data-v="${sp}">Fish for ${sp}</button>`;
+    return `<div class="run-alert"><div>🐟 <b>${esc(ri.run.label)}</b>: ${what} on the ${esc(p.name)}.</div>${btn}</div>`;
+  }).join('');
+}
+
 function viewChosen() {
   const i = S.inputs;
   let h = viewSelectedBar();
+  if (!S.loading) h += viewRunAlert();
   if (!S.loading) h += viewScore();
   if (S.manual) h += viewManual();
-  else if (!S.loading) h += viewConditions();
+  else if (!S.loading) h += viewConditions() + viewAbout();
   {
     h += `<div class="card"><h2>Your spot</h2>
-      <label class="field">Fishing for</label>${chips('species', [['trout', 'Trout'], ['steelhead', 'Steelhead / Salmon']], i.species)}
+      <label class="field">Fishing for</label>${speciesChips(i.species, S.manual ? null : riverProfile(S.site))}
       <label class="field">Water clarity</label>${chips('clarity', [['clear', 'Clear'], ['slight', 'Slight tint'], ['stained', 'Stained'], ['muddy', 'Muddy']], i.clarity)}
       <label class="field">Type of water</label>${chips('waterType', [['riffle', 'Riffle'], ['run', 'Run'], ['pool', 'Pool'], ['pocket', 'Pocket water'], ['flat', 'Flat / glide']], i.waterType)}
       <label class="field">Depth where fish hold: <span id="dv">${i.depthFt}</span> ft</label>
@@ -420,6 +477,197 @@ function viewChosen() {
     </div>`;
   }
   return h;
+}
+
+// ---------- About this river: profile, reports, my notes ----------
+
+const MONTH_ABBR = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+const SPECIES_LABEL = { trout: 'Trout', steelhead: 'Steelhead', salmon: 'Salmon' };
+
+function runCalendar(runs, month) {
+  return `<div class="runcal">${runs.map((r) => `<div class="runcal-row"><div class="runcal-label">${esc(r.label)}</div>
+    <div class="runcal-months">${MONTH_ABBR.map((m, k) => {
+      const mo = k + 1, cls = (r.peak || []).includes(mo) ? 'peak' : r.months.includes(mo) ? 'in' : '';
+      return `<span class="${cls}${mo === month ? ' now' : ''}" title="${cls || 'no run'}">${m}</span>`;
+    }).join('')}</div></div>`).join('')}
+    <div class="small muted">Dark = peak · light = fish in the river · outlined = this month</div></div>`;
+}
+
+const ageText = (iso) => {
+  if (!iso) return '';
+  // Calendar days between the post date and today, in local time.
+  const day = (t) => { const x = new Date(t); x.setHours(0, 0, 0, 0); return x.getTime(); };
+  const d = Math.round((day(Date.now()) - day(iso)) / 864e5);
+  return d <= 0 ? 'today' : d === 1 ? '1 day ago' : `${d} days ago`;
+};
+
+// Latest shop/guide reports and DNR sections for this river, from data/reports.json.
+function reportsFor(p) {
+  const R = S.reports;
+  if (!R || !p) return { items: [], dnr: null };
+  const items = [];
+  for (const src of [...(p.feeds || []), ...(p.reports || [])]) {
+    const f = R.feeds && R.feeds[src.url];
+    if (f) for (const it of f.items) items.push({ ...it, source: f.name || src.name });
+  }
+  items.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  let dnr = null;
+  const b = (R.dnr || [])[0];
+  if (b && (p.dnr || []).length) {
+    const keys = p.dnr.map((k) => k.toLowerCase());
+    const secs = b.sections.filter((s) => keys.some((k) => s.place.toLowerCase().includes(k) || s.text.toLowerCase().includes(k))).slice(0, 3);
+    if (secs.length) dnr = { ...b, sections: secs };
+  }
+  return { items: items.slice(0, 6), dnr };
+}
+
+function viewReports(p) {
+  let h = '<h3>Recent fishing reports</h3>';
+  const { items, dnr } = reportsFor(p);
+  const siteOf = (u) => { try { return new URL(u).origin; } catch (e) { return u; } };
+  const itemHtml = (it) => `<div class="report"><div class="report-src">📰 From <a href="${esc(siteOf(it.url))}" target="_blank" rel="noopener">${esc(it.source)}</a>
+    <span class="muted">· ${it.date ? new Date(it.date).toLocaleDateString([], { month: 'short', day: 'numeric' }) : ''} (${ageText(it.date)})</span></div>
+    <b>${esc(it.title)}</b>${it.excerpt ? `<div class="small">${esc(it.excerpt)}</div>` : ''}
+    <a href="${esc(it.url)}" target="_blank" rel="noopener">Read the full report on ${esc(it.source.replace(/\s*\(.*\)$/, ''))}'s site ↗</a></div>`;
+  if (items.length) {
+    h += itemHtml(items[0]);
+    if (items.length > 1) h += `<details class="more"><summary>More reports (${items.length - 1})</summary>${items.slice(1).map(itemHtml).join('')}</details>`;
+  }
+  if (dnr) {
+    h += `<div class="report"><div class="report-src">🏛️ From <a href="https://www.michigan.gov/dnr/things-to-do/fishing/weekly" target="_blank" rel="noopener">Michigan DNR</a>
+      <span class="muted">· ${new Date(dnr.date).toLocaleDateString([], { month: 'short', day: 'numeric' })} (${ageText(dnr.date)})</span></div>
+      <b>${esc(dnr.title)}</b>${dnr.sections.map((s) => `<div class="small"><b>${esc(s.place)}:</b> ${esc(s.text.length > 450 ? s.text.slice(0, 450) + '…' : s.text)}</div>`).join('')}
+      <a href="${esc(dnr.url)}" target="_blank" rel="noopener">Full DNR report ↗</a></div>`;
+  }
+  const withItems = new Set(Object.keys((S.reports && S.reports.feeds) || {}));
+  const links = (p ? p.reports || [] : []).filter((l) => !withItems.has(l.url));
+  if (links.length) h += `<p class="small" style="margin:8px 0 0">More reports: ${links.map((l) => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.name)} ↗</a>`).join(' · ')}</p>`;
+  if (items.length || dnr) h += '<p class="small muted" style="margin:6px 0 0">Report previews are shared from each source\'s public feed. Tap through to read the full report on their site.</p>';
+  if (!items.length && !dnr && !links.length) {
+    h += `<p class="small muted" style="margin:0">${S.reports ? 'No report sources for this river yet.' : 'Reports update daily from local shops and the Michigan DNR (not loaded yet).'}</p>`;
+  }
+  return h;
+}
+
+function viewAbout() {
+  const site = S.site, p = riverProfile(site), key = riverKey(site);
+  const month = new Date().getMonth() + 1;
+  let h = '<div class="card about"><h2>About this river</h2>';
+  if (p) {
+    h += `<p class="small muted" style="margin-top:0">${esc(p.name)} profile${p.local ? ', saved on this phone' : ''}</p>`;
+    h += `<div class="chips">${(p.species || []).map((s) => `<span class="chip on">${SPECIES_LABEL[s] || esc(s)}</span>`).join('')}</div>`;
+    if ((p.runs || []).length) h += runCalendar(p.runs, month);
+    const lib = S.kb.rivers.hatchLibrary || {};
+    const hs = (p.hatches || []).map((x) => (typeof x === 'string' ? lib[x] : x)).filter(Boolean);
+    if (hs.length) h += `<h3>Signature hatches</h3><ul class="notes">${hs.map((x) => `<li><b>${esc(x.name)}</b>: ${monthRange(x.months)}${x.time ? `, ${esc(x.time.join('/'))}` : ''}${x.dry && x.dry[0] ? ` · ${esc(x.dry[0])}` : ''}</li>`).join('')}</ul>`;
+    if ((p.notes || []).length) h += `<h3>Local knowledge</h3><ul class="notes">${p.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`;
+    if (p.source) h += `<p class="small muted">Source: ${esc(p.source)}. Seasonal guide only: always check current regulations.</p>`;
+  } else {
+    h += `<p style="margin-top:0">No profile for this river yet, so setups use conditions only. Build one with Claude to add which fish are here, run timing, signature hatches and local report sources.</p>`;
+  }
+  h += viewReports(p);
+  h += `<h3>My notes</h3><textarea data-rivernotes="${esc(key)}" style="min-height:70px" placeholder="Your own tips for this river (spots, flies that worked)…">${esc(S.riverNotes[key] || '')}</textarea>`;
+  if (!p || p.local) {
+    h += `<div class="btn-row" style="margin-top:12px"><button data-act="buildprofile">💬 ${p ? 'Update' : 'Build'} profile with Claude ↗</button></div>
+      <details class="more"${S.profileOpen ? ' open' : ''}><summary>Paste Claude's profile</summary>
+      <p class="small muted" style="margin-top:0">Copy Claude's whole answer, then paste it here.</p>
+      <textarea id="profpaste" style="min-height:80px" placeholder="Paste Claude's answer"></textarea>
+      <div class="btn-row" style="margin-top:8px"><button data-act="profclip">📋 Paste from clipboard</button><button data-act="saveprofile">Save profile</button></div></details>`;
+  }
+  if (p && p.local) h += `<p class="small" style="margin:8px 0 0"><button class="linkish" data-act="shareprofile">Copy profile to share</button> · <button class="linkish danger" data-act="delprofile">Remove profile</button></p>`;
+  return h + '</div>';
+}
+
+function buildProfilePrompt(site) {
+  const key = riverKey(site), [river, st] = key.split('|');
+  return [
+    'I use a fly fishing app called Fly Buddy. Please create a river profile for:',
+    `${river.replace(/\b\w/g, (c) => c.toUpperCase())}${st ? `, ${st}` : ''} (USGS gauge ${site.id}: "${site.name}").`,
+    '',
+    'Use what you know, and search the web if you can. Include:',
+    '- which of these the river holds: trout, steelhead, salmon',
+    '- for steelhead and salmon: the months fish are in the river, and the peak months',
+    '- up to 6 important hatches: name, months, water temp range (°F), time of day, dry/emerger/nymph patterns with hook sizes',
+    '- up to 5 short practical notes (what it is known for, access, regulations to check)',
+    '- up to 5 local fly shops or guides that post regular fishing reports online (name and the URL of their reports page)',
+    'Keep it factual and general: say "check current regulations" rather than quoting rules.',
+    '',
+    'Reply briefly, then end with this block as valid JSON (same keys), so I can paste it into the app:',
+    'FLYBUDDY-PROFILE',
+    '{"species":["trout","steelhead"],"runs":[{"species":"steelhead","label":"Steelhead (fall and spring)","months":[10,11,12,1,2,3,4],"peak":[3,4]}],"hatches":[{"name":"Hendricksons","months":[4,5],"temp":[50,58],"time":["afternoon"],"dry":["Hendrickson Parachute #12-14"],"emerger":[],"nymph":["Pheasant Tail #12-14"],"size":14}],"notes":["..."],"reports":[{"name":"Shop name","url":"https://..."}]}',
+    'FLYBUDDY-END',
+  ].join('\n');
+}
+
+// Pull the JSON profile out of Claude's reply and keep only well-formed, sensible values.
+function parseProfile(text, site) {
+  const m = /FLYBUDDY-PROFILE([\s\S]*?)(FLYBUDDY-END|$)/i.exec(text || '');
+  const body = m ? m[1] : text || '';
+  const a = body.indexOf('{'), b = body.lastIndexOf('}');
+  if (a < 0 || b < a) throw new Error('No profile block found. Copy Claude\'s whole answer, including the FLYBUDDY-PROFILE part.');
+  const raw = JSON.parse(body.slice(a, b + 1));
+  const months = (xs) => [...new Set((Array.isArray(xs) ? xs : []).map(Number).filter((n) => n >= 1 && n <= 12))];
+  const strs = (xs, n, len = 120) => (Array.isArray(xs) ? xs : []).map((x) => String(x).trim().slice(0, len)).filter(Boolean).slice(0, n);
+  const SP = ['trout', 'steelhead', 'salmon'];
+  const species = [...new Set(strs(raw.species, 3).map((s) => s.toLowerCase()).filter((s) => SP.includes(s)))];
+  const runs = (Array.isArray(raw.runs) ? raw.runs : []).map((r) => ({
+    species: String(r.species || '').toLowerCase(), label: String(r.label || r.species || 'Run').slice(0, 60),
+    months: months(r.months), peak: months(r.peak),
+  })).filter((r) => SP.includes(r.species) && r.months.length).slice(0, 6);
+  const TIMES = ['morning', 'midday', 'afternoon', 'evening'];
+  const hatches = (Array.isArray(raw.hatches) ? raw.hatches : []).map((x) => {
+    const t = Array.isArray(x.temp) && x.temp.length === 2 ? x.temp.map(Number) : [45, 65];
+    const time = strs(x.time, 4).map((s) => s.toLowerCase()).filter((s) => TIMES.includes(s));
+    return {
+      name: String(x.name || '').slice(0, 60), months: months(x.months), temp: t.every((v) => v > 30 && v < 85) ? t : [45, 65],
+      time: time.length ? time : ['afternoon'], regions: ['all'], boost: [], base: 0.8,
+      dry: strs(x.dry, 4), emerger: strs(x.emerger, 3), nymph: strs(x.nymph, 4), size: Math.min(24, Math.max(2, +x.size || 14)),
+    };
+  }).filter((x) => x.name && x.months.length).slice(0, 10);
+  const reports = (Array.isArray(raw.reports) ? raw.reports : []).map((r) => ({ name: String(r.name || '').slice(0, 60), url: String(r.url || '') }))
+    .filter((r) => r.name && /^https?:\/\/[^\s]+$/.test(r.url)).slice(0, 5);
+  if (!species.length) throw new Error('The profile didn\'t list any of trout, steelhead or salmon.');
+  const [river, st] = riverKey(site).split('|');
+  return {
+    name: river.replace(/\s+river$/, '').replace(/\b\w/g, (c) => c.toUpperCase()), match: [river], state: st || undefined,
+    species, runs, hatches, notes: strs(raw.notes, 6, 240), dnr: [], feeds: [], reports,
+    source: `Built with Claude, ${new Date().toLocaleDateString([], { month: 'short', year: 'numeric' })}`,
+  };
+}
+
+async function saveProfileText(text) {
+  try {
+    const p = parseProfile(text, S.site);
+    S.profiles[riverKey(S.site)] = p;
+    await store.set('profiles', S.profiles);
+    S.profileOpen = false;
+    render();
+    toast(`Profile saved: ${p.species.join(', ')}, ${p.runs.length} runs, ${p.hatches.length} hatches`);
+  } catch (e) {
+    toast(e instanceof SyntaxError ? 'That profile isn\'t valid JSON. Ask Claude to resend just the FLYBUDDY-PROFILE block.' : e.message);
+  }
+}
+
+// Reports come from data/reports.json, which the GitHub Action refreshes daily.
+// Read the repo copy on raw.githubusercontent.com first (newest), then the site's own copy.
+async function loadReports() {
+  const urls = [];
+  const host = location.hostname;
+  if (host.endsWith('.github.io')) {
+    const owner = host.split('.')[0], repo = location.pathname.split('/')[1];
+    if (repo) urls.push(`https://raw.githubusercontent.com/${owner}/${repo}/main/data/reports.json`);
+  }
+  urls.push('data/reports.json');
+  for (const u of urls) {
+    try {
+      const r = await fetch(`${u}?t=${Math.floor(Date.now() / 600e3)}`, { cache: 'no-store' });
+      if (!r.ok) continue;
+      S.reports = await r.json();
+      store.set('reports', S.reports);
+      return;
+    } catch (e) { /* try the next source */ }
+  }
+  S.reports = await store.get('reports');
 }
 
 function viewConditions() {
@@ -471,8 +719,9 @@ function viewSetups() {
   const rt = rateConditions(cond, S.kb);
   let h = `<div class="card small"><div class="site-head"><b>${esc(S.manual ? 'Manual conditions' : S.site.name)}</b>
     <span class="chip-score lvl-${rt.level}" title="Conditions score">${rt.score}</span></div>
-    ${c.species === 'steelhead' ? 'Steelhead / salmon' : 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${c.clarity} · ${c.waterType} ${c.depthFt} ft · ${c.tod}
+    ${SPECIES_LABEL[c.species] || 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${c.clarity} · ${c.waterType} ${c.depthFt} ft · ${c.tod}
     <p style="margin:8px 0 0"><button class="linkish" data-act="toask">💬 Ask Claude about these conditions</button></p></div>`;
+  h += viewRunAlert();
   for (const w of r.warnings) h += `<div class="alert ${w.level}">${w.level === 'stop' ? '🛑 ' : '⚠️ '}${esc(w.text)}</div>`;
   if (r.notes.length) h += `<div class="card"><h2>Reading the river</h2><ul class="notes">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>`;
   h += viewClaudeAnswers();
@@ -516,7 +765,7 @@ function buildPrompt(question) {
   if (wx) lines.push(`- Weather: ${wx.airF}°F air, ${codeText(wx.code).toLowerCase()}, ${wx.cloud}% cloud, wind ${wx.windMph} mph, barometer ${wx.pressureTrend}`);
   else if (S.manual) lines.push(`- Weather: ${S.inputs.sky}, ${S.inputs.wind}, barometer ${S.inputs.pressure}`);
   lines.push(`- Date/time: ${new Date().toLocaleString([], { month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })} (${c.tod}), region: ${c.region === 'west' ? 'western US' : 'eastern/midwest US'}`);
-  lines.push(`- Target: ${c.species === 'steelhead' ? 'steelhead / salmon' : 'trout'}; water clarity: ${c.clarity}; fishing a ${c.waterType} about ${c.depthFt} ft deep`);
+  lines.push(`- Target: ${c.species || 'trout'}; water clarity: ${c.clarity}; fishing a ${c.waterType} about ${c.depthFt} ft deep`);
   lines.push(`- App's conditions score: ${rt.score}/100 (${rt.label})`);
   if (r.hatches && r.hatches.length) lines.push(`- Likely hatches: ${r.hatches.map((x) => x.h.name).join(', ')}`);
   if (r.warnings.length) lines.push(`- Warnings: ${r.warnings.map((w) => w.text).join(' ')}`);
@@ -527,6 +776,25 @@ function buildPrompt(question) {
     lines.push(`${i + 1}. ${s.title}: ${s.rod.text}; ${rig}; flies: ${s.flies.slice(0, 3).map((f) => f.name).join(', ')}`);
   });
   lines.push('');
+  const prof = S.manual ? null : riverProfile(S.site);
+  const key = S.manual ? null : riverKey(S.site);
+  const myNotes = key && S.riverNotes[key];
+  if (prof || myNotes) {
+    lines.push('RIVER KNOWLEDGE (from my app)');
+    if (prof) {
+      lines.push(`- Holds: ${(prof.species || []).join(', ')}`);
+      for (const run of prof.runs || []) lines.push(`- ${run.label}: ${monthRange(run.months)}${run.peak && run.peak.length ? `, peak ${monthRange(run.peak)}` : ''}`);
+      const lib = S.kb.rivers.hatchLibrary || {};
+      const hs = (prof.hatches || []).map((x) => (typeof x === 'string' ? lib[x] : x)).filter(Boolean);
+      if (hs.length) lines.push(`- Signature hatches: ${hs.map((x) => `${x.name} (${monthRange(x.months)})`).join(', ')}`);
+      for (const n of (prof.notes || []).slice(0, 4)) lines.push(`- ${n}`);
+      const rep = reportsFor(prof);
+      if (rep.items[0]) lines.push(`- Latest local report: ${rep.items[0].source}, ${rep.items[0].date ? rep.items[0].date.slice(0, 10) : ''} "${rep.items[0].title}": ${rep.items[0].excerpt} (${rep.items[0].url})`);
+      if (rep.dnr) lines.push(`- Michigan DNR report (${rep.dnr.date.slice(0, 10)}): ${rep.dnr.sections.map((s) => `${s.place}: ${s.text.slice(0, 300)}`).join(' | ')}`);
+    }
+    if (myNotes) lines.push(`- My own notes: ${myNotes.slice(0, 500)}`);
+    lines.push('');
+  }
   lines.push('MY GEAR');
   lines.push(`- Rods: ${S.gear.rods.length ? S.gear.rods.map((g) => `${g.len}ft ${g.wt}wt ${g.type}`).join(', ') : 'not listed'}`);
   lines.push(`- Fly box: ${S.gear.flies.length ? S.gear.flies.slice(0, 60).join(', ') : 'not listed'}`);
@@ -660,7 +928,7 @@ function rigDiagram(parts) {
 
 // ---------- Log ----------
 
-const TECH = [['dry', 'Dry fly'], ['drydropper', 'Dry-dropper'], ['nymph', 'Indicator nymph'], ['euro', 'Euro nymph'], ['streamer', 'Streamer'], ['softhackle', 'Soft hackle'], ['swing', 'Swing'], ['skate', 'Skated dry'], ['shnymph', 'Egg / nymph (steelhead)']];
+const TECH = [['dry', 'Dry fly'], ['drydropper', 'Dry-dropper'], ['nymph', 'Indicator nymph'], ['euro', 'Euro nymph'], ['streamer', 'Streamer'], ['softhackle', 'Soft hackle'], ['swing', 'Swing'], ['skate', 'Skated dry'], ['shnymph', 'Egg / nymph (steelhead)'], ['salegg', 'Egg rig (salmon)'], ['salstreamer', 'Streamer (salmon)']];
 const techName = (k) => (TECH.find((t) => t[0] === k) || [k, k])[1];
 
 function viewLog() {
@@ -668,7 +936,7 @@ function viewLog() {
   const d = S.logDraft;
   if (d) {
     h += `<div class="card"><h2>Log a catch</h2>
-      <label class="field">Species</label>${chips('log.species', [['trout', 'Trout'], ['steelhead', 'Steelhead / Salmon']], d.species)}
+      <label class="field">Species</label>${chips('log.species', [['trout', 'Trout'], ['steelhead', 'Steelhead'], ['salmon', 'Salmon']], d.species)}
       <label class="field">Technique</label><select data-log="technique">${TECH.map(([k, l]) => `<option value="${k}" ${d.technique === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <label class="field">Fly</label><input type="text" list="flyopts" data-log="fly" value="${esc(d.fly)}" placeholder="e.g. Pheasant Tail #16">
       <datalist id="flyopts">${(d.flyOptions || []).map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
@@ -687,7 +955,7 @@ function viewLog() {
     for (const [k, c] of [...S.catches.entries()].reverse()) {
       h += `<div class="log-item" style="border-top:1px solid var(--line);padding:10px 0">${c.photo ? `<img src="${c.photo}" alt="">` : ''}
         <div style="flex:1"><div class="t">${esc(c.fly || 'Unknown fly')}${c.length ? ` · ${esc(c.length)}"` : ''}</div>
-        <div class="small">${esc(techName(c.technique))} · ${c.species === 'steelhead' ? 'Steelhead/Salmon' : 'Trout'} · ${new Date(c.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+        <div class="small">${esc(techName(c.technique))} · ${SPECIES_LABEL[c.species] || 'Trout'} · ${new Date(c.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div>
         <div class="small muted">${esc(condSummary(c.cond))}${c.notes ? `<br>${esc(c.notes)}` : ''}</div>
         <button class="linkish small danger" data-act="dellog" data-k="${k}">Delete</button></div></div>`;
     }
@@ -710,7 +978,7 @@ function startLog(key, fromBox) {
     : fromBox && res.fromBox && res.fromBox.setup ? res.fromBox.setup
       : res.setups.find((s) => s.key === key);
   S.logDraft = {
-    species: S.inputs.species, technique: key || (S.inputs.species === 'steelhead' ? 'swing' : 'nymph'),
+    species: S.inputs.species, technique: key || ({ steelhead: 'swing', salmon: 'salegg' }[S.inputs.species] || 'nymph'),
     fly: setup ? setup.flies[0].name.replace(/^(Tag|Point):\s*/, '') : '', length: '', notes: '', photo: null,
     flyOptions: res ? [...new Set(res.setups.flatMap((s) => s.flies.map((f) => f.name)))] : [],
     cond: cond ? {
@@ -764,6 +1032,9 @@ function flyCatalog() {
   add(1, hs.flatMap((h) => h.emerger)); add(1, kb.flies.soft_hackles);
   const sh = kb.steelhead;
   add(4, Object.values(sh.swing_flies).flatMap((x) => x.patterns)); add(4, sh.skaters); add(4, Object.values(sh.nymph_flies).flat());
+  add(4, Object.values(kb.salmon.streamers).flat()); add(4, Object.values(kb.salmon.eggs).flat()); add(4, kb.salmon.coho);
+  const lib = kb.rivers.hatchLibrary || {};
+  for (const h of Object.values(lib)) { add(0, h.dry); add(2, h.nymph); add(1, h.emerger); }
   for (const g of groups) g[1].sort((a, b) => a.localeCompare(b));
   catalogCache = groups;
   return groups;
@@ -873,6 +1144,33 @@ $app.addEventListener('click', async (e) => {
   else if (act === 'go') { S.tab = 'setups'; render(); window.scrollTo(0, 0); }
   else if (act === 'logthis') startLog(b.dataset.key, !!b.dataset.box);
   else if (act === 'toask') document.getElementById('ask').scrollIntoView({ behavior: 'smooth' });
+  else if (act === 'buildprofile') {
+    const prompt = buildProfilePrompt(S.site);
+    copyText(prompt);
+    window.open(CLAUDE_NEW + encodeURIComponent(prompt), '_blank');
+    S.profileOpen = true;
+    toast('Opening Claude… When it answers, copy the whole reply and paste it under "Paste Claude\'s profile".');
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+  else if (act === 'profclip') {
+    try {
+      const t = await navigator.clipboard.readText();
+      document.getElementById('profpaste').value = t;
+      saveProfileText(t);
+    } catch (e) { toast('Long-press the box and choose Paste, then tap Save profile.'); }
+  }
+  else if (act === 'saveprofile') saveProfileText(document.getElementById('profpaste').value);
+  else if (act === 'shareprofile') {
+    const p = { ...riverProfile(S.site) };
+    delete p.local;
+    const ok = await copyText(JSON.stringify(p, null, 2));
+    toast(ok ? 'Copied. On GitHub, paste it into knowledge/rivers.json inside the "rivers" list (add a comma between entries).' : 'Could not copy on this phone.');
+  }
+  else if (act === 'delprofile') {
+    if (!confirm('Remove the profile saved on this phone for this river?')) return;
+    delete S.profiles[riverKey(S.site)];
+    await store.set('profiles', S.profiles); render();
+  }
   else if (act === 'askchip') { const t = document.getElementById('askq'); t.value = b.dataset.v; S.askQ = b.dataset.v; }
   else if (act === 'ask' || act === 'askcopy') {
     const q = document.getElementById('askq').value.trim();
@@ -971,6 +1269,9 @@ $app.addEventListener('input', (e) => {
     saveSession();
   } else if (el.dataset.log) {
     S.logDraft[el.dataset.log] = el.value;
+  } else if (el.dataset.rivernotes !== undefined) {
+    S.riverNotes[el.dataset.rivernotes] = el.value;
+    store.set('rivernotes', S.riverNotes);
   } else if (el.id === 'askq') {
     S.askQ = el.value;
   } else if (el.dataset.gear === 'minScore') {
@@ -1037,6 +1338,10 @@ window.addEventListener('offline', render);
   S.catches = await store.get('catches', []);
   S.favorites = await store.get('favorites', []);
   S.boxPhotos = await store.get('boxPhotos', []);
+  S.profiles = await store.get('profiles', {});
+  S.riverNotes = await store.get('rivernotes', {});
+  S.reports = await store.get('reports');
+  loadReports().then(() => { if (S.tab === 'water' && !isPicking()) render(); });
   S.prep = await store.get('prepMsg', '');
   const sess = await store.get('session');
   if (sess) {

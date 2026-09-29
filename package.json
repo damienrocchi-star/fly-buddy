@@ -1,0 +1,6 @@
+{
+  "name": "fly-buddy",
+  "private": true,
+  "description": "Only used by the GitHub Action (tools/fetch-reports.mjs) so Node reads engine/*.js as ES modules. The app itself has no build step.",
+  "type": "module"
+}

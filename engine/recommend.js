@@ -53,7 +53,10 @@ export function scoreHatches(hatches, c) {
   const prev = ((c.month + 10) % 12) + 1, next = (c.month % 12) + 1;
   return hatches.map((h) => {
     if (!h.regions.includes('all') && !h.regions.includes(c.region)) return { h, score: 0 };
+    // A fresh local report mentioning this hatch counts for a lot.
+    const reported = (c.reportHatches || []).some((k) => h.name.toLowerCase().includes(k));
     let monthF = h.months.includes(c.month) ? 1 : (h.months.includes(prev) || h.months.includes(next)) ? 0.4 : 0;
+    if (reported) monthF = Math.max(monthF, 0.6);
     if (!monthF) return { h, score: 0 };
     const [lo, hi] = h.temp;
     const T = c.waterTempF;
@@ -61,15 +64,80 @@ export function scoreHatches(hatches, c) {
     const timeF = h.time.includes(tod) ? 1 : 0.6;
     let s = h.base * monthF * tempF * timeF;
     for (const b of h.boost) if (c.sky.has(b)) s += 0.12;
-    return { h, score: Math.round(s * 100) / 100 };
+    if (reported) s += 0.25;
+    return { h, score: Math.round(s * 100) / 100, reported };
   }).filter((x) => x.score > 0.15).sort((a, b) => b.score - a.score);
+}
+
+// ---------- river profiles ----------
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+export const SPECIES_NAME = { trout: 'trout', steelhead: 'steelhead', salmon: 'salmon' };
+
+// Generic hatch chart plus the river's own signature hatches (library names or full entries).
+export function allHatches(kb, river) {
+  const lib = (kb.rivers && kb.rivers.hatchLibrary) || {};
+  const local = ((river && river.hatches) || []).map((h) => (typeof h === 'string' ? lib[h] : h)).filter(Boolean)
+    .map((h) => ({ regions: ['all'], boost: [], time: ['afternoon'], base: 0.7, dry: [], emerger: [], nymph: [], size: 14, temp: [45, 65], ...h }));
+  const localNames = new Set(local.map((h) => h.name.toLowerCase()));
+  return [...kb.hatches.hatches.filter((h) => !localNames.has(h.name.toLowerCase())), ...local];
+}
+
+// Where a species' run stands this month on this river.
+// status: peak | in | shoulder (a month either side) | out | none (river doesn't have it) | unknown (no profile)
+export function runInfo(river, species, month) {
+  if (!river) return { status: 'unknown' };
+  if (!(river.species || []).includes(species)) return { status: 'none' };
+  const runs = (river.runs || []).filter((r) => r.species === species);
+  if (!runs.length) return species === 'trout' ? { status: 'in' } : { status: 'unknown' };
+  const prev = ((month + 10) % 12) + 1, next = (month % 12) + 1;
+  const rank = { peak: 4, in: 3, shoulder: 2, out: 1 };
+  let best = { status: 'out', run: runs[0] };
+  for (const r of runs) {
+    const st = (r.peak || []).includes(month) ? 'peak' : r.months.includes(month) ? 'in'
+      : (r.months.includes(prev) || r.months.includes(next)) ? 'shoulder' : 'out';
+    if (rank[st] > rank[best.status]) best = { status: st, run: r };
+  }
+  return best;
+}
+
+export const monthRange = (months) => {
+  // [10,11,12,1,2] -> "Oct–Feb"
+  if (!months || !months.length) return '';
+  return months.length === 12 ? 'all year' : `${MONTHS[months[0] - 1]}–${MONTHS[months[months.length - 1] - 1]}`;
+};
+
+// Notes and warnings about run timing for the chosen species on this river.
+function runAdvice(c, warnings, notes) {
+  const river = c.river;
+  if (!river) return;
+  const sp = c.species || 'trout';
+  const info = runInfo(river, sp, c.month);
+  const where = `the ${river.name}`;
+  if (info.status === 'none') {
+    const has = (river.species || []).map((s) => SPECIES_NAME[s]).join(', ');
+    warnings.push({ level: 'caution', text: `The ${river.name} isn't known for ${SPECIES_NAME[sp]}. It holds ${has}. Consider switching species above.` });
+  } else if (sp !== 'trout' && info.status === 'out') {
+    warnings.push({ level: 'caution', text: `${SPECIES_NAME[sp][0].toUpperCase() + SPECIES_NAME[sp].slice(1)} usually aren't in ${where} in ${MONTHS[c.month - 1]}. ${info.run.label} run ${monthRange(info.run.months)}.` });
+  } else if (sp !== 'trout' && info.status === 'shoulder') {
+    notes.push(`${info.run.label}: ${MONTHS[c.month - 1]} is at the edge of the run (${monthRange(info.run.months)}), so fish may be few.`);
+  } else if (sp !== 'trout' && (info.status === 'peak' || info.status === 'in')) {
+    notes.push(`${info.run.label} ${info.status === 'peak' ? 'are at their peak' : 'are in the river'} on ${where} now.`);
+  }
+  if (sp === 'trout' && ['peak', 'in'].includes(runInfo(river, 'salmon', c.month).status) && [9, 10, 11].includes(c.month)) {
+    notes.push('Salmon are spawning: trout (and steelhead) feed on drifting eggs behind them. Try an egg pattern as your point fly.');
+  }
+  for (const n of river.notes || []) notes.push(n);
 }
 
 // ---------- main entry ----------
 
 export function recommend(cond, kb, gear = {}, catches = []) {
   const c = prepare(cond);
-  const out = c.species === 'steelhead' ? steelhead(c, kb, gear) : trout(c, kb, gear);
+  const fn = c.species === 'steelhead' ? steelhead : c.species === 'salmon' ? salmon : trout;
+  const out = fn(c, kb, gear);
+  runAdvice(c, out.warnings, out.notes);
+  applyReportSignals(out, c.reportSignals);
   applyHistory(out.setups, c, catches);
   markOwnedFlies(out.setups, gear);
   out.setups.sort((a, b) => b.score - a.score);
@@ -83,6 +151,7 @@ export function prepare(cond) {
   const now = cond.now || new Date();
   const c = {
     ...cond,
+    reportHatches: cond.reportSignals ? cond.reportSignals.hatches : [],
     month: cond.month || now.getMonth() + 1,
     clarity: cond.clarity || 'clear',
     waterType: cond.waterType || 'run',
@@ -112,11 +181,13 @@ const SLOTS = {
   dry: ['dry'], drydropper: ['dry', 'nymph'], nymph: ['nymph', 'nymph'], euro: ['nymph', 'nymph'],
   streamer: ['streamer'], softhackle: ['emerger', 'emerger'],
   swing: ['swing'], skate: ['skater'], shnymph: ['egg', 'egg'],
+  salstreamer: ['salstreamer'], salegg: ['egg', 'egg'],
 };
 // Which fly types can fill each slot, best first.
 const ACCEPTS = {
   dry: ['dry'], nymph: ['nymph'], emerger: ['emerger'], streamer: ['streamer'],
   swing: ['swing', 'streamer'], skater: ['skater'], egg: ['egg', 'nymph'],
+  salstreamer: ['salstreamer', 'streamer', 'swing'],
 };
 
 function flyTypes(kb) {
@@ -129,7 +200,8 @@ function flyTypes(kb) {
     streamer: set(Object.values(fl.streamers).flat()),
     swing: set(Object.values(sh.swing_flies).flatMap((x) => x.patterns)),
     skater: set(sh.skaters),
-    egg: set(Object.values(sh.nymph_flies).flat()),
+    egg: set([...Object.values(sh.nymph_flies).flat(), ...(kb.salmon ? Object.values(kb.salmon.eggs).flat() : [])]),
+    salstreamer: set(kb.salmon ? [...Object.values(kb.salmon.streamers).flat(), ...kb.salmon.coho] : []),
   };
 }
 
@@ -138,7 +210,9 @@ function clarityFlies(kb, clarity) {
   const fl = kb.flies, sh = kb.steelhead;
   return {
     nymph: fl.nymphs[clarity] || [], streamer: fl.streamers[clarity] || [],
-    swing: (sh.swing_flies[clarity] || { patterns: [] }).patterns, egg: sh.nymph_flies[clarity] || [],
+    swing: (sh.swing_flies[clarity] || { patterns: [] }).patterns,
+    egg: [...(sh.nymph_flies[clarity] || []), ...(kb.salmon ? kb.salmon.eggs[clarity] || [] : [])],
+    salstreamer: kb.salmon ? kb.salmon.streamers[clarity] || [] : [],
     dry: fl.attractor_dries, emerger: fl.soft_hackles, skater: sh.skaters,
   };
 }
@@ -243,7 +317,7 @@ function trout(c, kb, gear) {
   if (c.weather && c.weather.pressureTrend === 'rising' && c.sky.has('sun')) notes.push('A bright day after a front usually means a tougher bite. Go smaller and deeper, tight to cover.');
   if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F from air temps. Use a thermometer and enter the real reading for better advice.`);
 
-  const hatches = scoreHatches(kb.hatches.hatches, c);
+  const hatches = scoreHatches(allHatches(kb, c.river), c);
   const top = hatches[0];
   const likely = hatches.filter((x) => x.score >= 0.35).slice(0, 3);
   const bugNames = likely.map((x) => x.h.name);
@@ -332,12 +406,16 @@ function trout(c, kb, gear) {
     if (clar === 'stained') { s += 5; why.push('Stained water: bright worms and eggs stand out.'); }
     if (isHigh(fb)) { s += 5; why.push('High water pushes fish to the bottom and the edges.'); }
     if (c.sky.has('sun') && c.tod === 'midday') s += 5;
+    // Salmon spawning on this river: trout sit behind them eating drifting eggs.
+    const eggDrift = [9, 10, 11].includes(c.month) && ['peak', 'in'].includes(runInfo(c.river, 'salmon', c.month).status);
+    if (eggDrift) { s += 15; why.unshift('Salmon are spawning here now, and trout are feeding on the eggs drifting behind them.'); }
     if (!why.length) why.push('Most of a trout\'s diet is nymphs. This is the most reliable way to catch fish most days.');
     const winter = c.month <= 3 || c.month === 12;
     const drop = top && top.h.nymph.length ? top.h.nymph[0] : winter ? kb.flies.winter_nymphs[0] : nymphClar[1];
     const base = (n) => n.split(/[#(]/)[0].trim();
     // Point fly: heavier/bigger than the dropper, and never the same pattern.
-    const pointOptions = clar === 'stained' || clar === 'muddy' ? nymphClar
+    const pointOptions = eggDrift ? ['Bead Egg (natural roe) 8 mm', 'Egg (orange/pink) #14', 'Glo Bug (peach) 8 mm']
+      : clar === 'stained' || clar === 'muddy' ? nymphClar
       : winter ? [kb.flies.winter_nymphs[1], ...kb.flies.winter_nymphs]
       : c.depthFt >= 4 || c.speed >= 2 ? ['Pat\'s Rubber Legs #8-10', ...kb.flies.nymphs.slight]
       : kb.flies.nymphs.slight;
@@ -565,6 +643,125 @@ function steelhead(c, kb, gear) {
   }
 
   return { warnings, notes, hatches: [], setups };
+}
+
+// ---------- SALMON (king / coho in Great Lakes rivers) ----------
+
+function salmon(c, kb, gear) {
+  const T = c.waterTempF;
+  const sk = kb.salmon;
+  const warnings = [], notes = [], setups = [];
+  const clar = c.clarity, fb = c.flowBand;
+
+  if (T >= 70) warnings.push({ level: 'stop', text: `Water is ${T}°F. That's very warm for salmon, and fish played in it often die. Consider waiting for cooler water.` });
+  else if (T >= 65) warnings.push({ level: 'caution', text: `Water is ${T}°F. Warm for salmon: fish at first light, use heavy tippet and land fish fast.` });
+  if (clar === 'muddy') warnings.push({ level: 'caution', text: 'Muddy water: fish the soft edges with big, bright flies, or wait for it to clear.' });
+  notes.push('Fair hooking only: a fish should take the fly in its mouth. Snagging is illegal, lining ("flossing") fish is unsporting, and many rivers limit weights and hook sizes. Check current regulations.');
+  notes.push('Target fresh, bright fish in runs and holes. Stay off spawning gravel (redds) and leave dark, spawning fish alone.');
+  if (c.flowTrend === 'rising' || (c.flowTrend === 'falling' && isHigh(fb))) notes.push('A bump in flow pulls fresh fish in from the lake. Fish the runs they move through.');
+  if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F. A thermometer reading will sharpen this.`);
+  const cohoOn = c.river && (c.river.runs || []).some((r) => r.species === 'salmon' && /coho/i.test(r.label) && r.months.includes(c.month));
+  const heavy = isHigh(fb) || c.depthFt >= 6;
+  const lb = clar === 'clear' ? '12' : '15';
+
+  // 1. Egg / bead under an indicator (holding fish)
+  {
+    let s = 60;
+    const why = ['Salmon holding in runs and holes take a well-drifted egg.'];
+    if (clar === 'stained') { s += 5; why.push('Stained water: bright eggs stand out.'); }
+    if (T < 50) s += 5;
+    if (c.depthFt >= 4) s += 5;
+    if (['pool', 'run'].includes(c.waterType)) s += 5;
+    if (clar === 'muddy') s -= 15;
+    const flies = sk.eggs[clar];
+    const ind = indicatorDepthFt(c.depthFt, c.speed);
+    setups.push({
+      key: 'salegg', title: 'Egg under an indicator', score: s, why,
+      rod: pickRod(gear, { wt: 9, len: 10, types: ['single', 'switch'] }), line: 'Floating line',
+      rig: [
+        { kind: 'line', label: 'Floating fly line' },
+        { kind: 'leader', label: '7.5-9 ft leader, 20 lb butt' },
+        { kind: 'indicator', label: `Indicator ${ind} ft above the shot`, detail: `≈1.5-2x depth (${c.depthFt} ft)` },
+        { kind: 'shot', label: splitShot(c.speed, c.depthFt, true), detail: 'Check regulations: some rivers limit weight' },
+        { kind: 'tippet', label: `2 ft of ${lb} lb fluorocarbon` },
+        { kind: 'fly', label: flies[0] },
+        { kind: 'tippet', label: `18 in of ${lb} lb fluoro dropper` },
+        { kind: 'fly', label: flies[1] },
+      ],
+      flies: flies.map((n) => ({ name: n, role: 'egg' })),
+      tips: ['Dead drift so the shot just ticks bottom. Salmon rarely move far for an egg.', 'Fight hard and land fish quickly, then release them fast and upright.'],
+    });
+  }
+
+  // 2. Swung / stripped streamer (fresh, moving fish)
+  {
+    let s = 55;
+    const why = ['Fresh, chrome salmon moving up from the lake are aggressive and will chase a streamer.'];
+    if (clar === 'slight' || clar === 'stained') s += 10;
+    if (c.lowLight) { s += 10; why.push('Low light: fresh fish are most willing to chase.'); }
+    if (c.flowTrend === 'rising' || c.flowTrend === 'falling') s += 8;
+    if (T >= 48 && T <= 60) s += 5;
+    if (clar === 'clear' && c.sky.has('sun') && c.tod === 'midday') s -= 10;
+    if (cohoOn) { s += 8; why.push('Coho are running. They love fast-stripped bright flies.'); }
+    const flies = [...sk.streamers[clar], ...(cohoOn ? sk.coho.slice(0, 2) : [])];
+    setups.push({
+      key: 'salstreamer', title: cohoOn ? 'Streamer (swing or strip) for kings and coho' : 'Swung or stripped streamer', score: s, why,
+      rod: pickRod(gear, { wt: 9, types: ['single', 'switch', 'spey'] }),
+      line: heavy ? 'Sink-tip line, T-11 to T-14' : 'Sink-tip line, T-8, or an intermediate line',
+      rig: [
+        { kind: 'line', label: heavy ? 'Sink-tip line (heavy: T-11 to T-14)' : 'Sink-tip or intermediate line' },
+        { kind: 'sinktip', label: heavy ? 'Heavy tip for high or deep water' : 'Medium tip' },
+        { kind: 'leader', label: `3-4 ft of ${lb === '12' ? '15' : '20'} lb tippet`, detail: 'Short leader keeps the fly down' },
+        { kind: 'fly', label: flies[0], detail: 'Loop knot for more action' },
+      ],
+      flies: flies.map((n, i) => ({ name: n, role: i === 0 ? 'first choice' : 'alternate' })),
+      tips: [
+        'Swing it across the tailouts and runs where fish move through, or strip it with sharp pulls. Change speed until they react.',
+        'Early and late in the day are best. Fresh fish often move at first light.',
+      ],
+    });
+  }
+
+  return { warnings, notes, hatches: [], setups };
+}
+
+// ---------- latest local reports ----------
+
+// Nudge setups toward what the latest local report says is working (never overrides the rules).
+function applyReportSignals(out, sig) {
+  if (!sig) return;
+  const picked = [];
+  const techLabels = [...new Set(Object.values(sig.techs).map((t) => t.label))];
+  if (techLabels.length) picked.push(techLabels.join(', '));
+  if (sig.hatches.length) picked.push(`${sig.hatches.join(', ')} hatch${sig.hatches.length > 1 ? 'es' : ''}`);
+  if (sig.colors.length) picked.push(sig.colors.join('/'));
+  for (const w of sig.water) picked.push(w.note);
+  if (picked.length) out.notes.unshift(`📰 From ${sig.credits.join(' and ')}: ${picked.join(' · ')}.`);
+  for (const w of sig.water) out.notes.push(`${w.credit} mentions ${w.note}. Set the clarity in "Your spot" to match what you see.`);
+
+  // Rigs whose first fly is the one a color tip applies to.
+  const single = ['streamer', 'salstreamer', 'swing', 'salegg', 'shnymph'];
+  for (const s of out.setups) {
+    const t = sig.techs[s.key];
+    if (t) {
+      s.score += 10;
+      s.why.unshift(`📰 ${t.credit} mentions ${t.label}.`);
+    }
+    if (sig.colors.length) {
+      const hasColor = (f) => sig.colors.some((c) => new RegExp(`\\b${c}\\b`, 'i').test(f.name));
+      const matching = s.flies.filter(hasColor);
+      if (matching.length && !hasColor(s.flies[0])) {
+        s.flies = [...matching, ...s.flies.filter((f) => !hasColor(f))];
+        s.why.push(`Latest report mentions ${sig.colors.join('/')}: those flies are listed first.`);
+        // Show the color match on the rig diagram too.
+        if (single.includes(s.key)) {
+          const part = s.rig.find((p) => p.kind === 'fly');
+          if (part) part.label = s.flies[0].name;
+        }
+      }
+    }
+  }
+  if (out.hatches) for (const x of out.hatches) if (x.reported) x.h = { ...x.h, name: `${x.h.name} (in the latest report)` };
 }
 
 // ---------- personalisation ----------

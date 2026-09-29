@@ -1,0 +1,345 @@
+{
+  "_about": "River profiles: local knowledge the app adds to live conditions. A gauge matches a profile when its name contains one of 'match' (and not 'exclude') and it's in 'state', or its USGS id is in 'sites'. species: trout / steelhead / salmon. runs: months (1-12) fish are in the river, 'peak' = best months. hatches: extra local hatches, same format as hatches.json. dnr: words to look for in the Michigan DNR weekly report. feeds: RSS/Atom feeds of local shop reports (fetched daily by the GitHub Action). reports: links to other report pages. Facts are general and seasonal: always check current regulations. See README 'Adding a river profile'.",
+  "rivers": [
+    {
+      "name": "Pere Marquette",
+      "match": ["pere marquette"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "salmon", "label": "King salmon", "months": [8, 9, 10, 11], "peak": [9, 10] },
+        { "species": "steelhead", "label": "Steelhead (fall and spring)", "months": [10, 11, 12, 1, 2, 3, 4, 5], "peak": [3, 4, 11] }
+      ],
+      "hatches": ["HEX", "BROWN_DRAKE", "ISONYCHIA"],
+      "notes": [
+        "Wild and Scenic river with wild browns and rainbows, fall king salmon and fall-to-spring steelhead.",
+        "Often the first Michigan river to get kings, from late August.",
+        "There is a flies-only stretch in the middle river. Check current regulations for its boundaries and seasons.",
+        "While kings spawn, trout and steelhead feed on drifting eggs behind them. Egg patterns shine in the fall.",
+        "Hex and brown drake hatches bring big browns up at dusk in June."
+      ],
+      "dnr": ["Ludington", "Pere Marquette"],
+      "feeds": [
+        { "name": "Baldwin Bait & Tackle", "url": "https://fishbaldwin.com/category/fishing-reports/feed/", "skip": "^Shop Hours.{0,30}?Daily\\s*" },
+        { "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }
+      ],
+      "reports": [
+        { "name": "Outfitters North", "url": "https://outfittersnorth.com/pere-marquette-river-fishing-report/" },
+        { "name": "West Michigan Guides", "url": "https://westmichiganguides.com/pere-marquette-river-fishing-reports" },
+        { "name": "Betts Guide Service", "url": "https://bettsguideservice.com/category/pere-marquette-river-fishing-report/" }
+      ],
+      "source": "Michigan DNR; Baldwin Bait & Tackle month-by-month guide; Michigan guide services"
+    },
+    {
+      "name": "Big Manistee",
+      "match": ["manistee r", "manistee river"],
+      "exclude": ["little manistee", "l manistee"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "salmon", "label": "King and coho salmon (below Tippy Dam)", "months": [8, 9, 10, 11], "peak": [9, 10] },
+        { "species": "steelhead", "label": "Summer Skamania steelhead", "months": [6, 7, 8], "peak": [7] },
+        { "species": "steelhead", "label": "Fall-to-spring steelhead (below Tippy Dam)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4, 11] }
+      ],
+      "hatches": ["HEX", "BROWN_DRAKE"],
+      "notes": [
+        "Tippy Dam is the upper limit for salmon and steelhead. The tailwater below it is the famous run fishery.",
+        "The upper river (above the dams) is trout water with a strong Hex hatch.",
+        "Steelhead hold over the winter, so January and February can fish well below Tippy."
+      ],
+      "dnr": ["Manistee", "Tippy"],
+      "feeds": [{ "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }],
+      "reports": [
+        { "name": "Betts Guide Service (Tippy Dam)", "url": "https://bettsguideservice.com/manistee-river-fishing-reports/" }
+      ],
+      "source": "Michigan DNR; Michigan guide services"
+    },
+    {
+      "name": "Little Manistee",
+      "match": ["little manistee", "l manistee"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "steelhead", "label": "Steelhead (fall and spring)", "months": [10, 11, 12, 1, 2, 3, 4, 5], "peak": [3, 4] },
+        { "species": "salmon", "label": "King salmon", "months": [9, 10, 11], "peak": [10] }
+      ],
+      "hatches": ["HEX"],
+      "notes": [
+        "Known for its spring steelhead run. The DNR runs an egg-take weir near Stronach.",
+        "Water near the weir can have special closures. Check current regulations.",
+        "Small, brushy river: short, accurate casts beat distance."
+      ],
+      "dnr": ["Little Manistee", "Manistee"],
+      "feeds": [{ "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Pine (Manistee tributary)",
+      "sites": ["04125460"],
+      "match": ["pine river at high school bridge"],
+      "state": "MI",
+      "species": ["trout"],
+      "runs": [],
+      "hatches": ["HEX"],
+      "notes": [
+        "Fast, cold trout stream with browns, brookies and rainbows. Tippy Dam blocks lake-run fish.",
+        "Very popular with canoes in summer: fish early morning and evening."
+      ],
+      "dnr": [],
+      "feeds": [{ "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Muskegon",
+      "match": ["muskegon river"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "salmon", "label": "King salmon (below Croton Dam)", "months": [8, 9, 10, 11], "peak": [9, 10] },
+        { "species": "steelhead", "label": "Steelhead (fall and spring, below Croton Dam)", "months": [10, 11, 12, 1, 2, 3, 4, 5], "peak": [3, 4, 11] }
+      ],
+      "hatches": ["HEX", "ISONYCHIA"],
+      "notes": [
+        "Big tailwater below Croton Dam. Croton to Newaygo is the most consistent stretch.",
+        "Cold dam releases keep trout going all summer; smallmouth bass fishing is strong July to early September.",
+        "Mostly a float river. Wade access is limited to specific spots."
+      ],
+      "dnr": ["Muskegon", "Croton"],
+      "feeds": [{ "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }],
+      "reports": [
+        { "name": "Orvis fishing report", "url": "https://fishingreports.orvis.com/midwest/michigan/muskegon-river" },
+        { "name": "Betts Guide Service", "url": "https://bettsguideservice.com/muskegon-river-fishing-report/" }
+      ],
+      "source": "Michigan DNR; Michigan guide services"
+    },
+    {
+      "name": "White",
+      "match": ["white river"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "salmon", "label": "King salmon", "months": [9, 10, 11], "peak": [10] },
+        { "species": "steelhead", "label": "Steelhead (fall and spring)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4] }
+      ],
+      "hatches": [],
+      "notes": ["Lake-run fish come up from White Lake. The upper river and tributaries hold trout."],
+      "dnr": ["Whitehall", "White Lake", "White River"],
+      "feeds": [{ "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Grand",
+      "match": ["grand river"],
+      "state": "MI",
+      "species": ["steelhead", "salmon"],
+      "runs": [
+        { "species": "salmon", "label": "King and coho salmon", "months": [9, 10, 11], "peak": [10] },
+        { "species": "steelhead", "label": "Steelhead (fall and spring)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [11, 3, 4] }
+      ],
+      "hatches": [],
+      "notes": [
+        "Big river. The Sixth Street Dam area in Grand Rapids is the classic spot for salmon and steelhead.",
+        "Not a trout river. In summer it's a smallmouth bass fishery.",
+        "High, muddy water after rain is common. Watch the flow before you go."
+      ],
+      "dnr": ["Grand Haven", "Grand River", "Grand Rapids"],
+      "feeds": [{ "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "St. Joseph",
+      "match": ["st. joseph river", "st joseph river", "st. joseph r"],
+      "state": "MI",
+      "species": ["steelhead", "salmon"],
+      "runs": [
+        { "species": "steelhead", "label": "Summer Skamania steelhead", "months": [6, 7, 8, 9], "peak": [7, 8] },
+        { "species": "steelhead", "label": "Winter and spring steelhead", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4] },
+        { "species": "salmon", "label": "King and coho salmon", "months": [9, 10], "peak": [10] }
+      ],
+      "hatches": [],
+      "notes": [
+        "Michigan's best summer-run (Skamania) steelhead river.",
+        "Fish ladders at the dams let lake-run fish far upriver.",
+        "Summer is also smallmouth bass season."
+      ],
+      "dnr": ["St. Joseph", "Berrien", "Niles"],
+      "feeds": [],
+      "reports": [],
+      "source": "Michigan DNR; Great Lakes Angler"
+    },
+    {
+      "name": "Au Sable",
+      "match": ["au sable", "ausable"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "steelhead", "label": "Steelhead (below Foote Dam only)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4] },
+        { "species": "salmon", "label": "King salmon (below Foote Dam only)", "months": [9, 10], "peak": [9, 10] }
+      ],
+      "hatches": ["HEX", "BROWN_DRAKE", "ISONYCHIA"],
+      "notes": [
+        "The upper river (Grayling to Mio) is classic wild-trout water, including the 'Holy Waters' stretch with special regulations. Check them.",
+        "Spring-fed and very stable, so it fishes when other rivers are high.",
+        "The Hex hatch usually peaks around the last week of June.",
+        "Lake-run steelhead and salmon only reach the river below Foote Dam, near Oscoda."
+      ],
+      "dnr": ["Oscoda", "Au Sable"],
+      "feeds": [{ "name": "Gates Au Sable Lodge", "url": "https://gateslodge.com/category/fishing-report/feed/" }],
+      "reports": [{ "name": "Orvis fishing report", "url": "https://fishingreports.orvis.com/midwest/michigan/au-sable-river" }],
+      "source": "Michigan DNR; Gates Au Sable Lodge; Michigan Fly Fishing Hub"
+    },
+    {
+      "name": "Rifle",
+      "match": ["rifle river"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "steelhead", "label": "Steelhead (spring and fall)", "months": [10, 11, 3, 4, 5], "peak": [4] },
+        { "species": "salmon", "label": "Salmon", "months": [9, 10], "peak": [10] }
+      ],
+      "hatches": [],
+      "notes": ["No dams on the main river, so lake-run fish spread through the system. Spring steelhead are the main event."],
+      "dnr": ["Rifle", "Saginaw Bay", "Au Gres"],
+      "feeds": [],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Boardman",
+      "match": ["boardman"],
+      "state": "MI",
+      "species": ["trout"],
+      "runs": [],
+      "hatches": ["HEX", "BROWN_DRAKE", "ISONYCHIA"],
+      "notes": [
+        "Trout river near Traverse City. Hendricksons and black caddis come in May; sulphurs, brown drakes and isonychia in June; the Hex in late June and July.",
+        "In September, fall browns chase streamers.",
+        "The river has changed a lot since dam removals. Check current access and regulations."
+      ],
+      "dnr": ["Traverse", "Boardman"],
+      "feeds": [],
+      "reports": [{ "name": "Orvis fishing report", "url": "https://fishingreports.orvis.com/midwest/michigan/boardman-river" }],
+      "source": "Michigan DNR; Orvis"
+    },
+    {
+      "name": "Platte",
+      "match": ["platte river"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "salmon", "label": "Coho salmon (Michigan's coho river)", "months": [8, 9, 10], "peak": [9] },
+        { "species": "salmon", "label": "King salmon", "months": [9, 10], "peak": [9, 10] },
+        { "species": "steelhead", "label": "Steelhead (fall and spring)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4] }
+      ],
+      "hatches": [],
+      "notes": [
+        "The DNR's main coho egg-collection weir is on the Platte. The lower river gets very busy in September.",
+        "Check current regulations for closures near the weir and the river mouth."
+      ],
+      "dnr": ["Platte", "Frankfort"],
+      "feeds": [],
+      "reports": [{ "name": "Orvis fishing report", "url": "https://fishingreports.orvis.com/midwest/michigan/platte-river" }],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Betsie",
+      "match": ["betsie"],
+      "state": "MI",
+      "species": ["trout", "steelhead", "salmon"],
+      "runs": [
+        { "species": "salmon", "label": "King salmon", "months": [9, 10], "peak": [9, 10] },
+        { "species": "steelhead", "label": "Steelhead (fall and spring)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4] }
+      ],
+      "hatches": [],
+      "notes": ["Lake-run kings and steelhead come up from Frankfort. The upper river holds trout."],
+      "dnr": ["Frankfort", "Betsie"],
+      "feeds": [],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Jordan",
+      "match": ["jordan river"],
+      "state": "MI",
+      "species": ["trout"],
+      "runs": [],
+      "hatches": ["BROWN_DRAKE"],
+      "notes": ["Clear, cold, spring-fed river. It's one of Michigan's best brook trout streams, with far fewer anglers than the big-name rivers."],
+      "dnr": ["Jordan", "Charlevoix"],
+      "feeds": [],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Rogue",
+      "match": ["rogue river"],
+      "state": "MI",
+      "species": ["trout", "steelhead"],
+      "runs": [
+        { "species": "steelhead", "label": "Steelhead (below Rockford)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4] }
+      ],
+      "hatches": [],
+      "notes": ["A Grand River tributary with browns and rainbows. Lake-run steelhead reach the lower river at Rockford."],
+      "dnr": ["Rogue", "Grand Rapids"],
+      "feeds": [{ "name": "Nomad Anglers (Michigan report)", "url": "https://nomadanglers.com/blogs/michigan-fishing-report.atom" }],
+      "reports": [],
+      "source": "Michigan DNR"
+    },
+    {
+      "name": "Huron",
+      "match": ["huron river"],
+      "state": "MI",
+      "species": ["trout", "steelhead"],
+      "runs": [
+        { "species": "steelhead", "label": "Steelhead (lower river)", "months": [10, 11, 12, 1, 2, 3, 4], "peak": [3, 4] }
+      ],
+      "hatches": [],
+      "notes": [
+        "Mostly a smallmouth bass river. Trout are stocked in special-regulation water near Proud Lake.",
+        "Steelhead run the lower river from Lake Erie in the cooler months."
+      ],
+      "dnr": ["Huron River", "Flat Rock", "Lake Erie"],
+      "feeds": [],
+      "reports": [{ "name": "Orvis fishing report", "url": "https://fishingreports.orvis.com/midwest/michigan/huron-river" }],
+      "source": "Michigan DNR; Orvis"
+    },
+    {
+      "name": "Madison",
+      "match": ["madison river"],
+      "state": "MT",
+      "species": ["trout"],
+      "runs": [],
+      "hatches": [],
+      "notes": [
+        "Wild rainbows and browns. The long riffle above Ennis is famous.",
+        "The salmonfly hatch arrives in June to early July, followed by caddis, PMDs and summer hoppers.",
+        "Some stretches have wade-only or special rules. Check current regulations."
+      ],
+      "dnr": [],
+      "feeds": [],
+      "reports": [],
+      "source": "Montana FWP; general knowledge"
+    }
+  ],
+  "hatchLibrary": {
+    "HEX": {
+      "name": "Hex (giant Michigan mayfly)", "months": [6, 7], "temp": [60, 72], "regions": ["all"], "time": ["evening"],
+      "boost": ["warm", "calm"], "base": 0.95,
+      "dry": ["Hex Paradrake #4-6", "Hex Spinner #4-6"], "emerger": ["Hex Emerger #6"], "nymph": ["Hex Wiggle Nymph #4-6"], "size": 6
+    },
+    "BROWN_DRAKE": {
+      "name": "Brown Drakes", "months": [5, 6], "temp": [55, 66], "regions": ["all"], "time": ["evening"],
+      "boost": ["warm", "calm"], "base": 0.8,
+      "dry": ["Brown Drake Parachute #10", "Brown Drake Spinner #10"], "emerger": [], "nymph": ["Brown Drake Nymph #10"], "size": 10
+    },
+    "ISONYCHIA": {
+      "name": "Isonychia (slate drakes)", "months": [6, 7, 8, 9], "temp": [58, 68], "regions": ["all"], "time": ["afternoon", "evening"],
+      "boost": ["overcast"], "base": 0.6,
+      "dry": ["Isonychia Parachute #10-12", "Slate Drake #10-12"], "emerger": [], "nymph": ["Isonychia Nymph #10-12", "Prince Nymph #10"], "size": 12
+    }
+  }
+}

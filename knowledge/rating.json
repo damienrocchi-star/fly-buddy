@@ -1,5 +1,5 @@
 {
-  "_about": "Fishing-conditions score out of 100. Each factor gets up to 'weight' points. 'temp' is a curve of [water temp F, fraction of points]; values in between are interpolated. Other factors map a condition to a fraction (0-1). Weights for a species should add up to 100. Edit freely.",
+  "_about": "Fishing-conditions score out of 100. Each factor gets up to 'weight' points. 'temp' is a curve of [water temp F, fraction of points]; values in between are interpolated. Other factors map a condition to a fraction (0-1). 'run' is run timing from the river profile (steelhead/salmon only). Weights for a species should add up to 100. Edit freely.",
   "labels": [
     { "min": 80, "label": "Excellent", "level": "great" },
     { "min": 65, "label": "Good", "level": "good" },
@@ -8,6 +8,7 @@
     { "min": 0, "label": "Tough", "level": "bad" }
   ],
   "defaultMinScore": 50,
+  "run": { "peak": 1, "in": 0.85, "shoulder": 0.45, "out": 0.05, "none": 0, "unknown": 0.7 },
   "trout": {
     "weights": { "temp": 30, "flow": 25, "trend": 10, "clarity": 15, "weather": 10, "hatch": 10 },
     "temp": [[32, 0], [38, 0.3], [42, 0.55], [48, 0.85], [50, 1], [62, 1], [65, 0.7], [67, 0.35], [68, 0]],
@@ -16,10 +17,17 @@
     "clarity": { "clear": 0.85, "slight": 1, "stained": 0.6, "muddy": 0.1 }
   },
   "steelhead": {
-    "weights": { "temp": 30, "flow": 25, "trend": 15, "clarity": 20, "weather": 10, "hatch": 0 },
+    "weights": { "temp": 25, "flow": 20, "trend": 10, "clarity": 15, "weather": 10, "run": 20 },
     "temp": [[32, 0], [36, 0.3], [40, 0.7], [44, 1], [55, 1], [60, 0.7], [64, 0.35], [68, 0]],
     "stopTempF": 68,
     "flow": { "very low": 0.3, "low": 0.7, "normal": 1, "high": 0.7, "very high": 0.2, "unknown": 0.7 },
     "clarity": { "clear": 0.8, "slight": 1, "stained": 0.75, "muddy": 0.15 }
+  },
+  "salmon": {
+    "weights": { "temp": 20, "flow": 20, "trend": 15, "clarity": 10, "weather": 10, "run": 25 },
+    "temp": [[38, 0.3], [44, 0.8], [48, 1], [60, 1], [64, 0.6], [68, 0.2], [70, 0]],
+    "stopTempF": 70,
+    "flow": { "very low": 0.35, "low": 0.7, "normal": 1, "high": 0.85, "very high": 0.3, "unknown": 0.7 },
+    "clarity": { "clear": 0.7, "slight": 1, "stained": 0.85, "muddy": 0.2 }
   }
 }

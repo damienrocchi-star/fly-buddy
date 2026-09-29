@@ -1,0 +1,16 @@
+{
+  "_about": "Pacific salmon (king/chinook and coho) in Great Lakes rivers. Flies by clarity, tip by flow. Edit freely.",
+  "streamers": {
+    "clear":   ["Egg-Sucking Leech (black/purple) #2-4", "Woolly Bugger (black/olive) #2-4", "Zonker (white/olive) #2", "Clouser Minnow (chartreuse/white) #2"],
+    "slight":  ["Egg-Sucking Leech (black/chartreuse) #2", "Woolly Bugger (black/chartreuse) #2", "Zonker (chartreuse) #2", "Flash Fly (silver/red) #2"],
+    "stained": ["Egg-Sucking Leech (purple/pink) #1-2", "Articulated Leech (black/blue) 3 in", "Woolly Bugger (chartreuse) #1-2", "Flash Fly (chartreuse) #1"],
+    "muddy":   ["Articulated Leech (black/blue) 4 in", "Woolly Bugger (chartreuse) #1", "Egg-Sucking Leech (black/chartreuse) #1"]
+  },
+  "eggs": {
+    "clear":   ["Glo Bug (peach/natural) 8-10 mm", "Bead Egg (natural roe) 10 mm", "Sucker Spawn (cream) #10", "Crystal Meth (orange) #10"],
+    "slight":  ["Glo Bug (orange) 10 mm", "Bead Egg (orange) 10-12 mm", "Estaz Egg (orange) #8", "Crystal Meth (chartreuse) #8"],
+    "stained": ["Glo Bug (chartreuse/orange) 12 mm", "Estaz Egg (chartreuse) #6", "Bead Egg (bright) 12 mm", "Sucker Spawn (orange) #8"],
+    "muddy":   ["Estaz Egg (chartreuse) #4-6", "Glo Bug (chartreuse) 14 mm", "Bead Egg (bright) 14 mm"]
+  },
+  "coho": ["Clouser Minnow (chartreuse/white) #4", "Flash Fly (silver) #4", "Woolly Bugger (chartreuse) #4", "Comet (orange) #4"]
+}
