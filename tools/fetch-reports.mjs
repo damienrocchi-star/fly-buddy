@@ -11,7 +11,9 @@ import { findTerms } from '../engine/report-signals.js';
 
 const DNR_RSS = 'https://public.govdelivery.com/topics/MIDNR_9/feed.rss';
 const OUT = 'data/reports.json';
-const UA = 'Mozilla/5.0 (compatible; FlyBuddyReports/1.0; +https://github.com)';
+// Browser-style identity plus our name: some shop sites' firewalls block generic "bot" identities.
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36 FlyBuddyReports/1.0';
+const FISHY = /fish|report|river|steelhead|salmon|trout|hatch|flows?\b|guide trip/i;
 
 async function get(url) {
   // Cache-buster: some sites answer "304 Not Modified" to feed readers without it.
@@ -66,7 +68,9 @@ async function main() {
         try { items = parseFeed(await get(c), { limit: 5, skip: job.skip, full: true }); } catch (e) { items = []; }
         if (items.length) { feedUrl = c; break; }
       }
-      if (!items.length) throw new Error('no items');
+      // Auto-discovered site feeds can include unrelated posts (events, recipes): keep only fishing ones.
+      if (!job.feedUrl) items = items.filter((it) => FISHY.test(`${it.title} ${it.excerpt}`));
+      if (!items.length) throw new Error('no fishing report items');
       // Keep only the matched keywords from the full post (for the app's setup nudges), never the text.
       for (const it of items) {
         if (vocab) it.terms = findTerms(`${it.title}. ${it.full || it.excerpt}`, vocab);
