@@ -35,6 +35,66 @@ export function findTerms(text, vocab) {
   return [...findPhrases(text, all)];
 }
 
+// ---------- what you're seeing on the water ----------
+
+// Fish observations -> setups they favor (weight 15: your eyes beat a shop report).
+export const OBS_FISH = {
+  rising: { label: 'fish rising', keys: ['dry', 'drydropper'] },
+  chasing: { label: 'fish chasing', keys: ['streamer', 'salstreamer', 'swing'] },
+  salmon: { label: 'salmon moving', keys: ['salstreamer', 'salegg'], run: 'salmon' },
+  steelhead: { label: 'steelhead showing', keys: ['swing', 'shnymph'], run: 'steelhead' },
+  nothing: { label: 'nothing happening', keys: [] },
+};
+// Generic bug chips -> hatch-name fragments ("mayfly" covers the mayfly hatches).
+const OBS_BUGS = {
+  caddis: ['caddis'], midges: ['midge'], stoneflies: ['stone', 'salmonfl', 'skwala', 'sallies'], hoppers: ['terrestrial'],
+  mayflies: ['olive', 'hendrickson', 'sulphur', 'march brown', 'pale morning', 'drake', 'isonychia', 'trico', 'mahogany', 'hex'],
+};
+export const OBS_MAX_AGE_MS = 3 * 3600e3;
+
+const minsAgo = (t, now) => {
+  const m = Math.max(0, Math.round((now - t) / 60000));
+  return m < 2 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} hr ago`;
+};
+
+// obs: { at, fish:[], bugs:[], water:[] } -> signals (same shape as extractSignals) plus flow/run hints.
+export function observationSignals(obs, now = Date.now()) {
+  if (!obs || now - obs.at > OBS_MAX_AGE_MS) return null;
+  const credit = `You (${minsAgo(obs.at, now)})`;
+  const out = { techs: {}, hatches: [], colors: [], water: [], credits: [credit], observed: true, runs: [], trend: null, rain: false };
+  for (const f of obs.fish || []) {
+    const o = OBS_FISH[f];
+    if (!o) continue;
+    for (const k of o.keys) if (!out.techs[k]) out.techs[k] = { label: o.label, credit, weight: 15 };
+    if (o.run) out.runs.push(o.run);
+  }
+  for (const b of obs.bugs || []) {
+    if (b === 'none') continue;
+    for (const m of OBS_BUGS[b] || [b]) if (!out.hatches.includes(m)) out.hatches.push(m);
+  }
+  out.seenHatches = [...out.hatches];
+  for (const w of obs.water || []) {
+    if (w === 'up') { out.trend = 'rising'; out.water.push({ note: 'water coming up', credit }); }
+    if (w === 'dropping') { out.trend = 'falling'; out.water.push({ note: 'water dropping', credit }); }
+    if (w === 'rain') { out.rain = true; out.water.push({ note: 'rain started', credit }); }
+  }
+  return out;
+}
+
+// Your observations first, then report signals for anything you didn't cover.
+export function mergeSignals(obs, rep) {
+  if (!obs) return rep;
+  if (!rep) return obs;
+  return {
+    ...obs,
+    techs: { ...rep.techs, ...obs.techs },
+    hatches: [...new Set([...obs.hatches, ...rep.hatches])],
+    colors: rep.colors,
+    water: [...obs.water, ...rep.water.filter((w) => !obs.water.some((o) => o.note === w.note))],
+    credits: [...obs.credits, ...rep.credits],
+  };
+}
+
 // items: [{ source, date, title, excerpt, terms? }] (newest first); dnr: { date, sections: [{ text }] } or null.
 export function extractSignals({ items = [], dnr = null } = {}, vocab, now = new Date()) {
   if (!vocab) return null;

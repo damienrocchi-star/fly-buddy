@@ -2,12 +2,12 @@
 import * as store from './store.js';
 import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi } from './data/usgs.js';
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
-import { recommend, regionFor, estimateWaterTempF, runInfo, monthRange, allHatches } from './engine/recommend.js';
+import { recommend, regionFor, estimateWaterTempF, runInfo, monthRange, allHatches, prepare, scoreHatches } from './engine/recommend.js';
 import { rateConditions } from './engine/rating.js';
-import { extractSignals } from './engine/report-signals.js';
+import { extractSignals, observationSignals, mergeSignals, OBS_MAX_AGE_MS } from './engine/report-signals.js';
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 
-const APP_VERSION = '9'; // keep in step with CACHE in sw.js
+const APP_VERSION = '10'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -20,7 +20,7 @@ const DEFAULT_INPUTS = {
 const S = {
   tab: 'water', picking: false, kb: null, favScores: {}, noaaFc: null,
   profiles: {}, riverNotes: {}, reports: null, profileOpen: false,
-  openState: {}, hadSession: false, nudgeDismissed: false, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
+  openState: {}, hadSession: false, nudgeDismissed: false, observed: {}, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -212,7 +212,51 @@ function manualWeather() {
 }
 
 function currentConditions() {
-  return S.manual ? condFor(null, S.wx, null, true) : condFor(S.site, S.wx, S.flow, true);
+  const base = S.manual ? condFor(null, S.wx, null, true) : condFor(S.site, S.wx, S.flow, true);
+  return applyObserved(base);
+}
+
+// ---------- what you're seeing (on-the-water observations, kept 3 hours per river) ----------
+
+const obsKey = () => (S.manual ? 'manual' : riverKey(S.site));
+function currentObs() {
+  const o = S.observed[obsKey()];
+  return o && Date.now() - o.at < OBS_MAX_AGE_MS ? o : null;
+}
+
+// Your observations override the gauge trend, add rain, and outrank report signals.
+function applyObserved(cond) {
+  const o = currentObs();
+  const sig = observationSignals(o);
+  if (!sig) return cond;
+  const out = { ...cond, observed: o, reportSignals: mergeSignals(sig, cond.reportSignals) };
+  if (sig.trend) out.flowTrend = sig.trend;
+  if (sig.rain) out.weather = { ...(cond.weather || {}), precip: Math.max(0.05, (cond.weather || {}).precip || 0), cloud: Math.max(85, (cond.weather || {}).cloud || 0) };
+  return out;
+}
+
+const OBS_LABEL = { rising: 'Rising', chasing: 'Chasing / boils', salmon: 'Salmon moving', steelhead: 'Steelhead showing', nothing: 'Nothing happening',
+  caddis: 'Caddis', mayflies: 'Mayflies', midges: 'Midges', stoneflies: 'Stoneflies', hoppers: 'Hoppers', none: 'No bugs',
+  up: 'Water coming up', rain: 'Rain started', dropping: 'Water dropping' };
+const obsText = (o) => [...(o.fish || []), ...(o.bugs || []), ...(o.water || [])]
+  .map((v) => OBS_LABEL[v] || v.replace(/\b\w/g, (ch) => ch.toUpperCase())).join(', ');
+
+async function toggleObs(group, value) {
+  const key = obsKey();
+  const o = currentObs() || { at: Date.now(), fish: [], bugs: [], water: [] };
+  const list = new Set(o[group]);
+  // "Nothing happening" / "No bugs" can't be combined with anything else in their group.
+  const exclusive = { fish: 'nothing', bugs: 'none' }[group];
+  if (list.has(value)) list.delete(value);
+  else {
+    if (value === exclusive) list.clear(); else list.delete(exclusive);
+    if (group === 'water' && (value === 'up' || value === 'dropping')) { list.delete('up'); list.delete('dropping'); }
+    list.add(value);
+  }
+  o[group] = [...list];
+  o.at = Date.now();
+  S.observed[key] = o;
+  await store.set('observed', S.observed);
 }
 
 // Engine input for a gauge (or manual mode when site is null), using "Your spot" choices.
@@ -424,8 +468,10 @@ function viewScore() {
       <div class="small">${esc(r.summary)}</div></div></div>`;
   if (r.score < min) h += `<div class="alert caution" style="margin:10px 0 0">Below your minimum of ${min}. Probably not worth the trip today.</div>`;
   h += `<details class="more"><summary>How this score works</summary>
-    ${r.factors.map((f) => `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts}/${f.max}</b></div>
-      <div class="bar"><span style="width:${Math.round(f.frac * 100)}%"></span></div><div class="small muted">${esc(f.note)}</div></div>`).join('')}
+    ${r.factors.map((f) => (f.bonus
+    ? `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts > 0 ? '+' : ''}${f.pts}</b></div><div class="small muted">${esc(f.note)}</div></div>`
+    : `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts}/${f.max}</b></div>
+      <div class="bar"><span style="width:${Math.round(f.frac * 100)}%"></span></div><div class="small muted">${esc(f.note)}</div></div>`)).join('')}
     <p class="small muted">Scores use your "Your spot" choices above (species and clarity matter most). Tune the weights in knowledge/rating.json.</p></details>`;
   return h + `</div>`;
 }
@@ -488,8 +534,11 @@ function viewSpot() {
   const i = S.inputs;
   const temp = i.tempOverride !== '' ? `${i.tempOverride}°F` : (S.site && S.site.waterTempF != null && !S.manual ? `${S.site.waterTempF}°F gauge` : 'temp estimated');
   const summary = [SPECIES_LABEL[i.species] || 'Trout', CLARITY_LABEL[i.clarity], `${WATER_LABEL[i.waterType]} ${i.depthFt} ft`, temp].join(' · ');
+  const o = currentObs();
+  const seen = o && obsText(o);
   return `<details class="card spot" ${keep('spot', !S.hadSession)}>
-    <summary><span class="spot-k">Your spot</span><span class="spot-v">${esc(summary)}</span><span class="spot-edit">Change</span></summary>
+    <summary><span class="spot-k">Your spot</span><span class="spot-v">${esc(summary)}${seen ? `<span class="obs-line">👀 ${esc(seen)} · ${ago(o.at)}</span>` : ''}</span><span class="spot-edit">Change</span></summary>
+    ${viewObserve(o)}
     <label class="field">Fishing for</label>${speciesChips(i.species, S.manual ? null : riverProfile(S.site))}
     <label class="field">Water clarity</label>${chips('clarity', [['clear', 'Clear'], ['slight', 'Slight tint'], ['stained', 'Stained'], ['muddy', 'Muddy']], i.clarity)}
     <label class="field">Type of water</label>${chips('waterType', [['riffle', 'Riffle'], ['run', 'Run'], ['pool', 'Pool'], ['pocket', 'Pocket water'], ['flat', 'Flat / glide']], i.waterType)}
@@ -498,6 +547,24 @@ function viewSpot() {
     <label class="field">Water temp from your thermometer (°F, optional)</label>
     <input type="number" inputmode="decimal" placeholder="${S.site && S.site.waterTempF != null && !S.manual ? `gauge says ${S.site.waterTempF}°F` : 'e.g. 52'}" value="${esc(i.tempOverride)}" data-in="tempOverride">
   </details>`;
+}
+
+// "What are you seeing?" chips. Likely hatches for today come first among the bugs.
+function viewObserve(o) {
+  const has = (g, v) => !!(o && (o[g] || []).includes(v));
+  const chip = (g, v, label) => `<button class="chip ${has(g, v) ? 'on' : ''}" data-act="obs" data-g="${g}" data-v="${esc(v)}">${esc(label)}</button>`;
+  let likely = [];
+  try {
+    const c = prepare({ ...(S.manual ? condFor(null, S.wx, null, true) : condFor(S.site, S.wx, S.flow, true)), reportSignals: null });
+    likely = scoreHatches(allHatches(S.kb, c.river), c).slice(0, 3).map((x) => x.h.name.replace(/\s*\(.*$/, ''));
+  } catch (e) { /* no hatch info */ }
+  const generic = ['caddis', 'mayflies', 'midges', 'stoneflies', 'hoppers'];
+  return `<div class="observe"><div class="observe-head"><b>What are you seeing?</b>
+      ${o ? `<button class="linkish small" data-act="obsclear">Clear</button>` : '<span class="small muted">Tap what\'s happening now</span>'}</div>
+    <div class="obs-group"><span class="obs-k">Fish</span><div class="chips">${['rising', 'chasing', 'salmon', 'steelhead', 'nothing'].map((v) => chip('fish', v, OBS_LABEL[v])).join('')}</div></div>
+    <div class="obs-group"><span class="obs-k">Bugs</span><div class="chips">${likely.map((n) => chip('bugs', n.toLowerCase(), n)).join('')}${generic.filter((g) => !likely.some((l) => l.toLowerCase().includes(g.slice(0, 5)))).map((v) => chip('bugs', v, OBS_LABEL[v])).join('')}${chip('bugs', 'none', 'No bugs')}</div></div>
+    <div class="obs-group"><span class="obs-k">Water</span><div class="chips">${chip('water', 'up', 'Coming up')}${chip('water', 'dropping', 'Dropping')}${chip('water', 'rain', 'Rain started')}</div></div>
+    <p class="small muted" style="margin:4px 0 0">Your observations adjust the score and setups for the next 3 hours, and go to Claude when you ask.</p></div>`;
 }
 
 // Short spec line for a setup: first fly · rod · tippet.
@@ -864,6 +931,12 @@ function buildPrompt(question) {
       if (rep.dnr) lines.push(`- Michigan DNR report (${rep.dnr.date.slice(0, 10)}): ${rep.dnr.sections.map((s) => `${s.place}: ${s.text.slice(0, 300)}`).join(' | ')}`);
     }
     if (myNotes) lines.push(`- My own notes: ${myNotes.slice(0, 500)}`);
+    lines.push('');
+  }
+  const seenNow = currentObs();
+  if (seenNow) {
+    lines.push(`WHAT I'M SEEING ON THE WATER (${ago(seenNow.at)})`);
+    lines.push(`- ${obsText(seenNow)}`);
     lines.push('');
   }
   lines.push('MY GEAR');
@@ -1276,6 +1349,15 @@ $app.addEventListener('click', async (e) => {
     el.scrollIntoView({ behavior: 'smooth' });
   }
   else if (act === 'quicklog') quickLog(b.dataset.key, !!b.dataset.box);
+  else if (act === 'obs') {
+    await toggleObs(b.dataset.g, b.dataset.v);
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+  else if (act === 'obsclear') {
+    delete S.observed[obsKey()];
+    await store.set('observed', S.observed);
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
   else if (act === 'dismissnudge') { S.nudgeDismissed = true; store.set('nudgeDismissed', true); render(); }
   else if (act === 'buildprofile') {
     const prompt = buildProfilePrompt(S.site);
@@ -1483,6 +1565,7 @@ window.addEventListener('offline', render);
   S.profiles = await store.get('profiles', {});
   S.riverNotes = await store.get('rivernotes', {});
   S.nudgeDismissed = await store.get('nudgeDismissed', false);
+  S.observed = await store.get('observed', {});
   S.reports = await store.get('reports');
   loadReports().then(() => { if (S.tab === 'water' && !isPicking()) render(); });
   S.prep = await store.get('prepMsg', '');

@@ -271,4 +271,13 @@ details.compact h2 { font-size: 19px; }
 details.ask > summary { list-style: none; cursor: pointer; }
 details.ask > summary::-webkit-details-marker { display: none; }
 .summary .run-alert { margin: 10px 0 0; }
+/* What are you seeing? */
+.obs-line { display: block; font-weight: 700; color: var(--accent); margin-top: 2px; }
+.observe { background: var(--bg); border-radius: 12px; padding: 10px 12px; margin: 8px 0 12px; }
+.observe-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.obs-group { margin-top: 8px; }
+.obs-k { font-size: 14px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.observe .chips { margin: 4px 0 0; }
+.observe .chip { font-size: 15px; padding: 7px 12px; min-height: 38px; background: var(--card); }
+.observe .chip.on { background: var(--accent); color: #fff; }
 .nudge { background: var(--warn-bg); color: var(--warn-ink); border-color: transparent; }

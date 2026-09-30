@@ -53,10 +53,13 @@ export function scoreHatches(hatches, c) {
   const prev = ((c.month + 10) % 12) + 1, next = (c.month % 12) + 1;
   return hatches.map((h) => {
     if (!h.regions.includes('all') && !h.regions.includes(c.region)) return { h, score: 0 };
-    // A fresh local report mentioning this hatch counts for a lot.
-    const reported = (c.reportHatches || []).some((k) => h.name.toLowerCase().includes(k));
+    // A fresh local report mentioning this hatch counts for a lot; seeing it yourself counts for more.
+    const name = h.name.toLowerCase();
+    const seen = (c.seenHatches || []).some((k) => name.includes(k));
+    const reported = seen || (c.reportHatches || []).some((k) => name.includes(k));
     let monthF = h.months.includes(c.month) ? 1 : (h.months.includes(prev) || h.months.includes(next)) ? 0.4 : 0;
-    if (reported) monthF = Math.max(monthF, 0.6);
+    if (reported && monthF) monthF = Math.max(monthF, 0.8);
+    else if (seen) monthF = 0.5; // you're seeing it, whatever the calendar says
     if (!monthF) return { h, score: 0 };
     const [lo, hi] = h.temp;
     const T = c.waterTempF;
@@ -64,7 +67,8 @@ export function scoreHatches(hatches, c) {
     const timeF = h.time.includes(tod) ? 1 : 0.6;
     let s = h.base * monthF * tempF * timeF;
     for (const b of h.boost) if (c.sky.has(b)) s += 0.12;
-    if (reported) s += 0.25;
+    if (seen) s += 0.6;
+    else if (reported) s += 0.25;
     return { h, score: Math.round(s * 100) / 100, reported };
   }).filter((x) => x.score > 0.15).sort((a, b) => b.score - a.score);
 }
@@ -114,7 +118,11 @@ function runAdvice(c, warnings, notes) {
   const sp = c.species || 'trout';
   const info = runInfo(river, sp, c.month);
   const where = `the ${river.name}`;
-  if (info.status === 'none') {
+  const seeing = c.reportSignals && c.reportSignals.observed && c.reportSignals.runs.includes(sp);
+  if (seeing) {
+    // Your eyes beat the calendar.
+    notes.push(`You're seeing ${sp} on ${where}, so the run is on for you whatever the calendar says.`);
+  } else if (info.status === 'none') {
     const has = (river.species || []).map((s) => SPECIES_NAME[s]).join(', ');
     warnings.push({ level: 'caution', text: `The ${river.name} isn't known for ${SPECIES_NAME[sp]}. It holds ${has}. Consider switching species above.` });
   } else if (sp !== 'trout' && info.status === 'out') {
@@ -152,6 +160,7 @@ export function prepare(cond) {
   const c = {
     ...cond,
     reportHatches: cond.reportSignals ? cond.reportSignals.hatches : [],
+    seenHatches: cond.reportSignals && cond.reportSignals.seenHatches ? cond.reportSignals.seenHatches : [],
     month: cond.month || now.getMonth() + 1,
     clarity: cond.clarity || 'clear',
     waterType: cond.waterType || 'run',
@@ -736,16 +745,19 @@ function applyReportSignals(out, sig) {
   if (sig.hatches.length) picked.push(`${sig.hatches.join(', ')} hatch${sig.hatches.length > 1 ? 'es' : ''}`);
   if (sig.colors.length) picked.push(sig.colors.join('/'));
   for (const w of sig.water) picked.push(w.note);
-  if (picked.length) out.notes.unshift(`📰 From ${sig.credits.join(' and ')}: ${picked.join(' · ')}.`);
-  for (const w of sig.water) out.notes.push(`${w.credit} mentions ${w.note}. Set the clarity in "Your spot" to match what you see.`);
+  if (picked.length) out.notes.unshift(`${sig.observed ? '👀' : '📰'} From ${sig.credits.join(' and ')}: ${picked.join(' · ')}.`);
+  for (const w of sig.water) {
+    if (w.credit.startsWith('You')) continue; // already in the line above
+    out.notes.push(`${w.credit} mentions ${w.note}. Set the clarity in "Your spot" to match what you see.`);
+  }
 
   // Rigs whose first fly is the one a color tip applies to.
   const single = ['streamer', 'salstreamer', 'swing', 'salegg', 'shnymph'];
   for (const s of out.setups) {
     const t = sig.techs[s.key];
     if (t) {
-      s.score += 10;
-      s.why.unshift(`📰 ${t.credit} mentions ${t.label}.`);
+      s.score += t.weight || 10;
+      s.why.unshift(t.credit.startsWith('You') ? `👀 You're seeing ${t.label}.` : `📰 ${t.credit} mentions ${t.label}.`);
     }
     if (sig.colors.length) {
       const hasColor = (f) => sig.colors.some((c) => new RegExp(`\\b${c}\\b`, 'i').test(f.name));
