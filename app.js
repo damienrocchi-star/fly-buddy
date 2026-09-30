@@ -7,7 +7,7 @@ import { rateConditions } from './engine/rating.js';
 import { extractSignals } from './engine/report-signals.js';
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 
-const APP_VERSION = '8'; // keep in step with CACHE in sw.js
+const APP_VERSION = '9'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -19,7 +19,8 @@ const DEFAULT_INPUTS = {
 
 const S = {
   tab: 'water', picking: false, kb: null, favScores: {}, noaaFc: null,
-  profiles: {}, riverNotes: {}, reports: null, profileOpen: false, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
+  profiles: {}, riverNotes: {}, reports: null, profileOpen: false,
+  openState: {}, hadSession: false, nudgeDismissed: false, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -39,11 +40,20 @@ function ago(ts) {
 const fmtTime = (d) => d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—';
 const trendArrow = (t) => ({ rising: '↑ rising', falling: '↓ falling', steady: '→ steady' }[t] || '');
 
-function toast(msg) {
+// Brief message at the bottom; optional action button, e.g. { label: 'Add details', fn }.
+function toast(msg, action) {
+  document.querySelectorAll('.toast').forEach((x) => x.remove());
   const t = document.createElement('div');
-  t.className = 'toast'; t.textContent = msg;
+  t.className = 'toast';
+  t.textContent = msg;
+  if (action) {
+    const b = document.createElement('button');
+    b.className = 'toast-action'; b.textContent = action.label;
+    b.addEventListener('click', () => { t.remove(); action.fn(); });
+    t.appendChild(b);
+  }
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 2600);
+  setTimeout(() => t.remove(), action ? 6000 : 2600);
 }
 
 function chips(field, options, current) {
@@ -416,18 +426,25 @@ function viewScore() {
   h += `<details class="more"><summary>How this score works</summary>
     ${r.factors.map((f) => `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts}/${f.max}</b></div>
       <div class="bar"><span style="width:${Math.round(f.frac * 100)}%"></span></div><div class="small muted">${esc(f.note)}</div></div>`).join('')}
-    <p class="small muted">Scores use your "Your spot" choices below (species and clarity matter most). Tune the weights in knowledge/rating.json.</p></details>`;
+    <p class="small muted">Scores use your "Your spot" choices above (species and clarity matter most). Tune the weights in knowledge/rating.json.</p></details>`;
+  return h + `</div>`;
+}
+
+// Today plus the next 3 days, scored.
+function viewForecast() {
+  const min = minScore();
+  let h = '';
   const fc = forecastRatings();
   if (fc.length > 1) {
     const dayName = (d, i) => (i === 0 ? 'Today' : new Date(`${d}T12:00`).toLocaleDateString([], { weekday: 'short' }));
-    h += `<h3>Next few days</h3><div class="fc">${fc.map((d, i) => `<div class="${d.rating.score >= min ? '' : 'below'}">
+    h += `<div class="card"><h2>Next few days</h2><div class="fc">${fc.map((d, i) => `<div class="${d.rating.score >= min ? '' : 'below'}">
       <b>${dayName(d.date, i)}</b><br><span class="chip-score lvl-${d.rating.level}">${d.rating.score}</span><br>
       <span class="small">${d.max}°/${d.min}°</span><br><span class="muted small">${esc(codeText(d.code))}</span></div>`).join('')}</div>`;
     const notes = fc.flatMap((d, i) => d.notes.map((n) => `${dayName(d.date, i)}: ${n}`));
     const noaa = fc.some((d) => d.src === 'noaa');
-    h += `<p class="small muted" style="margin:8px 0 0">${notes.map(esc).join('<br>')}${notes.length ? '<br>' : ''}Future days: ${noaa ? 'NOAA river forecast plus' : 'no NOAA flow forecast for this gauge right now, so based on'} the weather forecast. Water temps are estimated.</p>`;
+    h += `<p class="small muted" style="margin:8px 0 0">${notes.map(esc).join('<br>')}${notes.length ? '<br>' : ''}Future days: ${noaa ? 'NOAA river forecast plus' : 'no NOAA flow forecast for this gauge right now, so based on'} the weather forecast. Water temps are estimated.</p></div>`;
   }
-  return h + `</div>`;
+  return h;
 }
 
 // Species chips; fish the river's profile doesn't list are shown faded (still tappable).
@@ -457,25 +474,65 @@ function viewRunAlert() {
   }).join('');
 }
 
-function viewChosen() {
+// Remembers which <details> sections are open across re-renders: data-keep="key".
+function keep(key, defaultOpen = false) {
+  const open = S.openState[key] ?? defaultOpen;
+  return `data-keep="${esc(key)}"${open ? ' open' : ''}`;
+}
+
+const CLARITY_LABEL = { clear: 'Clear', slight: 'Slight tint', stained: 'Stained', muddy: 'Muddy' };
+const WATER_LABEL = { riffle: 'Riffle', run: 'Run', pool: 'Pool', pocket: 'Pocket water', flat: 'Flat/glide' };
+
+// "Your spot": a one-line summary that opens to the choices that drive the score and setups.
+function viewSpot() {
   const i = S.inputs;
+  const temp = i.tempOverride !== '' ? `${i.tempOverride}°F` : (S.site && S.site.waterTempF != null && !S.manual ? `${S.site.waterTempF}°F gauge` : 'temp estimated');
+  const summary = [SPECIES_LABEL[i.species] || 'Trout', CLARITY_LABEL[i.clarity], `${WATER_LABEL[i.waterType]} ${i.depthFt} ft`, temp].join(' · ');
+  return `<details class="card spot" ${keep('spot', !S.hadSession)}>
+    <summary><span class="spot-k">Your spot</span><span class="spot-v">${esc(summary)}</span><span class="spot-edit">Change</span></summary>
+    <label class="field">Fishing for</label>${speciesChips(i.species, S.manual ? null : riverProfile(S.site))}
+    <label class="field">Water clarity</label>${chips('clarity', [['clear', 'Clear'], ['slight', 'Slight tint'], ['stained', 'Stained'], ['muddy', 'Muddy']], i.clarity)}
+    <label class="field">Type of water</label>${chips('waterType', [['riffle', 'Riffle'], ['run', 'Run'], ['pool', 'Pool'], ['pocket', 'Pocket water'], ['flat', 'Flat / glide']], i.waterType)}
+    <label class="field">Depth where fish hold: <span id="dv">${i.depthFt}</span> ft</label>
+    <input type="range" min="1" max="10" step="0.5" value="${i.depthFt}" data-in="depthFt">
+    <label class="field">Water temp from your thermometer (°F, optional)</label>
+    <input type="number" inputmode="decimal" placeholder="${S.site && S.site.waterTempF != null && !S.manual ? `gauge says ${S.site.waterTempF}°F` : 'e.g. 52'}" value="${esc(i.tempOverride)}" data-in="tempOverride">
+  </details>`;
+}
+
+// Short spec line for a setup: first fly · rod · tippet.
+function keySpec(s) {
+  const tip = s.rig.find((p) => p.kind === 'leader') || s.rig.find((p) => p.kind === 'tippet');
+  return [s.flies[0] && s.flies[0].name, s.rod.text.replace(/^your /, ''), tip && tip.label].filter(Boolean).join(' · ');
+}
+
+// The top setup, right on the River tab.
+function viewBestBet() {
+  const r = recommend(currentConditions(), S.kb, S.gear, S.catches);
+  const stop = r.warnings.find((w) => w.level === 'stop');
+  const s = r.setups[0];
+  if (!s) return '';
+  return `<div class="card bestbet">
+    <div class="rank">🎣 Best bet right now</div>
+    <h2>${esc(s.title)}</h2>
+    ${stop ? `<p class="danger" style="margin:0 0 6px">🛑 ${esc(stop.text)}</p>` : ''}
+    <p class="spec">${esc(keySpec(s))}</p>
+    <p class="small" style="margin:4px 0 0">${esc(s.why[0] || '')}</p>
+    <p style="margin:10px 0 0"><button class="linkish" data-tab="setups">See all setups, rigs and flies →</button></p>
+  </div>`;
+}
+
+function viewChosen() {
   let h = viewSelectedBar();
-  if (!S.loading) h += viewRunAlert();
-  if (!S.loading) h += viewScore();
+  if (S.loading) return h + viewSpot();
+  h += viewSpot();
+  h += viewRunAlert();
+  h += viewScore();
+  h += viewBestBet();
+  h += viewForecast();
   if (S.manual) h += viewManual();
-  else if (!S.loading) h += viewConditions() + viewAbout();
-  {
-    h += `<div class="card"><h2>Your spot</h2>
-      <label class="field">Fishing for</label>${speciesChips(i.species, S.manual ? null : riverProfile(S.site))}
-      <label class="field">Water clarity</label>${chips('clarity', [['clear', 'Clear'], ['slight', 'Slight tint'], ['stained', 'Stained'], ['muddy', 'Muddy']], i.clarity)}
-      <label class="field">Type of water</label>${chips('waterType', [['riffle', 'Riffle'], ['run', 'Run'], ['pool', 'Pool'], ['pocket', 'Pocket water'], ['flat', 'Flat / glide']], i.waterType)}
-      <label class="field">Depth where fish hold: <span id="dv">${i.depthFt}</span> ft</label>
-      <input type="range" min="1" max="10" step="0.5" value="${i.depthFt}" data-in="depthFt">
-      <label class="field">Water temp from your thermometer (°F, optional)</label>
-      <input type="number" inputmode="decimal" placeholder="${S.site && S.site.waterTempF != null && !S.manual ? `gauge says ${S.site.waterTempF}°F` : 'e.g. 52'}" value="${esc(i.tempOverride)}" data-in="tempOverride">
-      <p style="margin:14px 0 0"><button class="btn-primary" data-act="go">🎣 Show me what to fish</button></p>
-    </div>`;
-  }
+  else h += viewConditions() + viewAbout();
+  h += `<div class="sticky-cta"><button class="btn-primary" data-tab="setups">🎣 Setups for this spot</button></div>`;
   return h;
 }
 
@@ -552,21 +609,34 @@ function viewReports(p) {
 function viewAbout() {
   const site = S.site, p = riverProfile(site), key = riverKey(site);
   const month = new Date().getMonth() + 1;
+  // Each part folds to a one-line summary so the card stays short.
+  const section = (k, title, summary, body, open = false) => `<details class="sec" ${keep(`about-${k}`, open)}>
+    <summary><b>${title}</b>${summary ? `<span class="sec-sum">${summary}</span>` : ''}</summary>${body}</details>`;
   let h = '<div class="card about"><h2>About this river</h2>';
   if (p) {
-    h += `<p class="small muted" style="margin-top:0">${esc(p.name)} profile${p.local ? ', saved on this phone' : ''}</p>`;
-    h += `<div class="chips">${(p.species || []).map((s) => `<span class="chip on">${SPECIES_LABEL[s] || esc(s)}</span>`).join('')}</div>`;
-    if ((p.runs || []).length) h += runCalendar(p.runs, month);
+    h += `<p class="small muted" style="margin:0 0 6px">${esc(p.name)} profile${p.local ? ', saved on this phone' : ''} · ${(p.species || []).map((s) => SPECIES_LABEL[s] || esc(s)).join(', ')}</p>`;
+    if ((p.runs || []).length) {
+      const live = p.runs.filter((r) => r.months.includes(month));
+      const sum = live.length ? live.map((r) => `${esc(r.label)}${(r.peak || []).includes(month) ? ': peak now' : ': in now'}`).join(' · ') : 'No runs this month';
+      h += section('runs', 'Runs', sum, runCalendar(p.runs, month));
+    }
     const lib = S.kb.rivers.hatchLibrary || {};
     const hs = (p.hatches || []).map((x) => (typeof x === 'string' ? lib[x] : x)).filter(Boolean);
-    if (hs.length) h += `<h3>Signature hatches</h3><ul class="notes">${hs.map((x) => `<li><b>${esc(x.name)}</b>: ${monthRange(x.months)}${x.time ? `, ${esc(x.time.join('/'))}` : ''}${x.dry && x.dry[0] ? ` · ${esc(x.dry[0])}` : ''}</li>`).join('')}</ul>`;
-    if ((p.notes || []).length) h += `<h3>Local knowledge</h3><ul class="notes">${p.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>`;
-    if (p.source) h += `<p class="small muted">Source: ${esc(p.source)}. Seasonal guide only: always check current regulations.</p>`;
+    if (hs.length) h += section('hatches', 'Signature hatches', `${hs.length}`, `<ul class="notes">${hs.map((x) => `<li><b>${esc(x.name)}</b>: ${monthRange(x.months)}${x.time ? `, ${esc(x.time.join('/'))}` : ''}${x.dry && x.dry[0] ? ` · ${esc(x.dry[0])}` : ''}</li>`).join('')}</ul>`);
+    if ((p.notes || []).length) {
+      h += section('notes', 'Local knowledge', `${p.notes.length}`, `<ul class="notes">${p.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
+        ${p.source ? `<p class="small muted">Source: ${esc(p.source)}. Seasonal guide only: always check current regulations.</p>` : ''}`);
+    }
   } else {
     h += `<p style="margin-top:0">No profile for this river yet, so setups use conditions only. Build one with Claude to add which fish are here, run timing, signature hatches and local report sources.</p>`;
   }
-  h += viewReports(p);
-  h += `<h3>My notes</h3><textarea data-rivernotes="${esc(key)}" style="min-height:70px" placeholder="Your own tips for this river (spots, flies that worked)…">${esc(S.riverNotes[key] || '')}</textarea>`;
+  const rep = reportsFor(p);
+  const newest = rep.items[0];
+  const repSum = newest ? `${esc(newest.source)}, ${ageText(newest.date)}` : rep.dnr ? `Michigan DNR, ${ageText(rep.dnr.date)}` : 'none yet';
+  h += section('reports', 'Latest reports', repSum, viewReports(p).replace('<h3>Recent fishing reports</h3>', ''), true);
+  const note = S.riverNotes[key] || '';
+  h += section('mynotes', 'My notes', note ? esc(note.slice(0, 40)) + (note.length > 40 ? '…' : '') : 'add your own',
+    `<textarea data-rivernotes="${esc(key)}" style="min-height:70px" placeholder="Your own tips for this river (spots, flies that worked)…">${esc(note)}</textarea>`);
   if (!p || p.local) {
     h += `<div class="btn-row" style="margin-top:12px"><button data-act="buildprofile">💬 ${p ? 'Update' : 'Build'} profile with Claude ↗</button></div>
       <details class="more"${S.profileOpen ? ' open' : ''}><summary>Paste Claude's profile</summary>
@@ -689,8 +759,8 @@ function viewConditions() {
       <div class="stat"><div class="k">Moon</div><div class="s" style="font-size:16px;color:var(--ink)">${moonPhase()}</div></div>`;
   }
   h += `</div>`;
-  if (fl) h += `<p class="small muted" style="margin:8px 0 0">Normal for today: ${Math.round(fl.p25)}–${Math.round(fl.p75)} cfs (median ${Math.round(fl.p50)}).</p>`;
-  if (wx) h += `<p class="small muted" style="margin:8px 0 0">Weather updated ${ago(wx.fetchedAt)}.</p>`;
+  const foot = [fl ? `Normal today ${Math.round(fl.p25)}–${Math.round(fl.p75)} cfs` : '', wx ? `weather ${ago(wx.fetchedAt)}` : ''].filter(Boolean).join(' · ');
+  if (foot) h += `<p class="small muted" style="margin:8px 0 0">${foot}</p>`;
   return h + `</div>`;
 }
 
@@ -717,17 +787,18 @@ function viewSetups() {
   const c = r.cond;
   const tempSrc = cond.tempSource || (c.tempEstimated ? 'estimated' : '');
   const rt = rateConditions(cond, S.kb);
-  let h = `<div class="card small"><div class="site-head"><b>${esc(S.manual ? 'Manual conditions' : S.site.name)}</b>
+  let h = `<div class="card summary"><div class="site-head"><b>${esc(S.manual ? 'Manual conditions' : S.site.name)}</b>
     <span class="chip-score lvl-${rt.level}" title="Conditions score">${rt.score}</span></div>
-    ${SPECIES_LABEL[c.species] || 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${c.clarity} · ${c.waterType} ${c.depthFt} ft · ${c.tod}
+    <div class="small">${SPECIES_LABEL[c.species] || 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${CLARITY_LABEL[c.clarity].toLowerCase()} · ${WATER_LABEL[c.waterType].toLowerCase()} ${c.depthFt} ft · ${c.tod}</div>
+    ${viewRunAlert()}
     <p style="margin:8px 0 0"><button class="linkish" data-act="toask">💬 Ask Claude about these conditions</button></p></div>`;
-  h += viewRunAlert();
+  h += viewNudge();
   for (const w of r.warnings) h += `<div class="alert ${w.level}">${w.level === 'stop' ? '🛑 ' : '⚠️ '}${esc(w.text)}</div>`;
-  if (r.notes.length) h += `<div class="card"><h2>Reading the river</h2><ul class="notes">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>`;
+  h += readingTheRiver(r.notes, c.river);
   h += viewClaudeAnswers();
 
   const top = r.setups.slice(0, 3), rest = r.setups.slice(3);
-  top.forEach((s, k) => { h += setupCard(s, k); });
+  top.forEach((s, k) => { h += k === 0 ? setupCard(s, 0, false, null, 'best') : compactSetup(s, k); });
   h += fromBoxCard(r.fromBox);
   if (rest.length) h += `<details class="more card"><summary>More options (${rest.length})</summary>${rest.map((s, k) => setupCard(s, k + 3, true)).join('')}</details>`;
   h += viewAskClaude();
@@ -838,8 +909,9 @@ function parseAnswer(text) {
 
 function viewAskClaude() {
   const q = S.askQ || '';
-  return `<div class="card" id="ask"><h2>💬 Ask Claude</h2>
-    <p class="small muted" style="margin-top:0">Opens Claude on this phone with today's conditions, the setups above and your gear already filled in. It uses your own Claude account (a free account works), with no cost to the app.</p>
+  return `<details class="card ask" id="ask" ${keep('ask')}><summary><h2 style="margin:0">💬 Ask Claude about this</h2>
+    <span class="small muted">Get a second opinion, or ask about what you're seeing</span></summary>
+    <p class="small muted">Opens Claude on this phone with today's conditions, the setups above and your gear already filled in. It uses your own Claude account (a free account works), with no cost to the app.</p>
     <div class="chips">${ASK_CHIPS.map((t) => `<button class="chip" data-act="askchip" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>
     <textarea id="askq" style="min-height:80px" placeholder="Or type your own question…">${esc(q)}</textarea>
     <p style="margin:10px 0 0"><button class="btn-primary" data-act="ask">Ask Claude ↗</button></p>
@@ -848,7 +920,7 @@ function viewAskClaude() {
     <p class="small muted" style="margin-top:0">In Claude, tap <b>Copy</b> under the answer, then come back and paste it here. I'll pull out the setup and save it for this river.</p>
     <textarea id="answer" style="min-height:90px" placeholder="Paste Claude's answer here"></textarea>
     <div class="btn-row" style="margin-top:10px"><button data-act="pasteclip">📋 Paste from clipboard</button><button data-act="saveanswer">Save answer</button></div>
-  </div>`;
+  </details>`;
 }
 
 function viewClaudeAnswers() {
@@ -887,6 +959,44 @@ async function saveAnswer(text) {
   toast(a.structured ? 'Claude\'s setup saved for this river' : 'Saved. (No setup block found, so I kept the full answer.)');
 }
 
+// At most 3 headline notes, most useful first; the rest fold away. Profile notes are left out
+// (they're on the River tab), and notes saying the same thing appear once.
+function readingTheRiver(notes, river) {
+  const profileNotes = new Set((river && river.notes) || []);
+  const seen = new Set();
+  const list = notes.filter((n) => {
+    if (profileNotes.has(n)) return false;
+    const key = /egg/i.test(n) && /spawn/i.test(n) ? 'eggdrift' : n;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const rank = (n) => (n.startsWith('📰') ? 0 : /run|peak|spawn|season/i.test(n) ? 1 : /likely bugs|hatch/i.test(n) ? 2 : 3);
+  list.sort((a, b) => rank(a) - rank(b));
+  if (!list.length) return '';
+  const top = list.slice(0, 3), rest = list.slice(3);
+  return `<div class="card"><h2>Reading the river</h2><ul class="notes">${top.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
+    ${rest.length ? `<details class="more" ${keep('morenotes')}><summary>More notes (${rest.length})</summary><ul class="notes">${rest.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>` : ''}</div>`;
+}
+
+// 2nd and 3rd choices: title, first reason and key specs; tap to see the full rig.
+function compactSetup(s, k) {
+  const rank = ['Best bet', '2nd choice', '3rd choice'][k] || 'Option';
+  return `<details class="card setup compact" ${keep(`setup-${s.key}`)}>
+    <summary><div class="rank">${rank}</div><h2>${esc(s.title)}</h2>
+      <p class="spec">${esc(keySpec(s))}</p><p class="small" style="margin:2px 0 0">${esc(s.why[0] || '')}</p>
+      <span class="more-link">Show rig, flies and tips</span></summary>
+    ${setupCard(s, k, true, '', '', true)}
+  </details>`;
+}
+
+// One-time hint for new users: add gear so setups can mark what you own.
+function viewNudge() {
+  if (S.nudgeDismissed || S.gear.rods.length || S.gear.flies.length) return '';
+  return `<div class="card nudge"><b>Tip:</b> add your rods and flies on the <b>Gear</b> tab. Setups will then use your rods, mark flies you own with ✓ and build a setup from your own box.
+    <div class="btn-row" style="margin-top:8px"><button data-tab="gear">🧰 Go to Gear</button><button class="linkish" data-act="dismissnudge">Not now</button></div></div>`;
+}
+
 function fromBoxCard(fb) {
   if (!fb) return '';
   const head = '<div class="rank">🧰 From your fly box</div>';
@@ -900,17 +1010,18 @@ function fromBoxCard(fb) {
     ${fb.status === 'empty' ? '<p style="margin:10px 0 0"><button style="width:100%" data-tab="gear">🧰 Go to my fly box</button></p>' : ''}</div>`;
 }
 
-function setupCard(s, k, inner, rankHtml, extraClass = '') {
+function setupCard(s, k, inner, rankHtml, extraClass = '', noHead = false) {
   const rank = ['Best bet', '2nd choice', '3rd choice'][k] || 'Option';
-  return `<div class="${inner ? '' : 'card '}setup ${extraClass}">${rankHtml || `<div class="rank">${rank}</div>`}<h2>${esc(s.title)}</h2>
+  const head = noHead ? '' : `${rankHtml || `<div class="rank">${rank}</div>`}<h2>${esc(s.title)}</h2>`;
+  return `<div class="${inner ? '' : 'card '}setup ${extraClass}">${head}
     <ul class="why">${s.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
     <dl class="kv"><dt>Rod</dt><dd>${esc(s.rod.text)}${s.rod.note ? `<br><span class="small muted">${esc(s.rod.note)}</span>` : ''}</dd>
     <dt>Line</dt><dd>${esc(s.line)}</dd></dl>
     <h3>Rig, top to bottom</h3>${rigDiagram(s.rig)}
     <h3>Flies</h3><ul class="fly-list">${s.flies.map((f) => `<li><span>${f.owned ? '<span class="own">✓ </span>' : ''}${esc(f.name)}</span><span class="role">${esc(f.role)}</span></li>`).join('')}</ul>
     ${s.flies.some((f) => f.owned) ? '<p class="small muted" style="margin:0 0 6px">✓ = in your fly box</p>' : ''}
-    <h3>Tips</h3><ul class="notes">${s.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>
-    <p style="margin:12px 0 0"><button style="width:100%" data-act="logthis" data-key="${s.key}"${extraClass === 'boxsetup' ? ' data-box="1"' : ''}>🐟 Caught one on this? Log it</button></p>
+    <details class="more tips" ${keep(`tips-${s.key}-${extraClass}`)}><summary>Tips (${s.tips.length})</summary><ul class="notes">${s.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></details>
+    <p style="margin:12px 0 0"><button style="width:100%" data-act="quicklog" data-key="${s.key}"${extraClass === 'boxsetup' ? ' data-box="1"' : ''}>🐟 Caught one on this</button></p>
   </div>`;
 }
 
@@ -972,12 +1083,29 @@ function condSummary(c) {
 }
 
 function startLog(key, fromBox) {
+  S.logDraft = makeLogDraft(key, fromBox);
+  S.tab = 'log'; render(); window.scrollTo(0, 0);
+}
+
+// "Caught one on this": save straight away with the setup's first fly and current conditions.
+async function quickLog(key, fromBox) {
+  const d = makeLogDraft(key, fromBox);
+  S.catches.push({ date: Date.now(), species: d.species, technique: d.technique, fly: d.fly, length: '', notes: '', photo: null, cond: d.cond });
+  await store.set('catches', S.catches);
+  const idx = S.catches.length - 1;
+  toast(`Catch saved 🐟 ${d.fly || ''}`, {
+    label: 'Add details',
+    fn: () => { S.logDraft = { ...d, editIndex: idx }; S.tab = 'log'; render(); window.scrollTo(0, 0); },
+  });
+}
+
+function makeLogDraft(key, fromBox) {
   const cond = S.site || S.manual ? currentConditions() : null;
   const res = lastResult;
   const setup = !res || !key ? null
     : fromBox && res.fromBox && res.fromBox.setup ? res.fromBox.setup
       : res.setups.find((s) => s.key === key);
-  S.logDraft = {
+  return {
     species: S.inputs.species, technique: key || ({ steelhead: 'swing', salmon: 'salegg' }[S.inputs.species] || 'nymph'),
     fly: setup ? setup.flies[0].name.replace(/^(Tag|Point):\s*/, '') : '', length: '', notes: '', photo: null,
     flyOptions: res ? [...new Set(res.setups.flatMap((s) => s.flies.map((f) => f.name)))] : [],
@@ -987,7 +1115,6 @@ function startLog(key, fromBox) {
       depthFt: cond.depthFt, month: new Date().getMonth() + 1,
     } : null,
   };
-  S.tab = 'log'; render(); window.scrollTo(0, 0);
 }
 
 function resizePhoto(file, maxPx = 900, quality = 0.72) {
@@ -1143,7 +1270,13 @@ $app.addEventListener('click', async (e) => {
   }
   else if (act === 'go') { S.tab = 'setups'; render(); window.scrollTo(0, 0); }
   else if (act === 'logthis') startLog(b.dataset.key, !!b.dataset.box);
-  else if (act === 'toask') document.getElementById('ask').scrollIntoView({ behavior: 'smooth' });
+  else if (act === 'toask') {
+    const el = document.getElementById('ask');
+    S.openState.ask = true; el.open = true;
+    el.scrollIntoView({ behavior: 'smooth' });
+  }
+  else if (act === 'quicklog') quickLog(b.dataset.key, !!b.dataset.box);
+  else if (act === 'dismissnudge') { S.nudgeDismissed = true; store.set('nudgeDismissed', true); render(); }
   else if (act === 'buildprofile') {
     const prompt = buildProfilePrompt(S.site);
     copyText(prompt);
@@ -1209,7 +1342,10 @@ $app.addEventListener('click', async (e) => {
   else if (act === 'cancellog') { S.logDraft = null; render(); }
   else if (act === 'savelog') {
     const d = S.logDraft;
-    S.catches.push({ date: Date.now(), species: d.species, technique: d.technique, fly: d.fly.trim(), length: d.length, notes: d.notes, photo: d.photo, cond: d.cond });
+    const entry = { species: d.species, technique: d.technique, fly: d.fly.trim(), length: d.length, notes: d.notes, photo: d.photo, cond: d.cond };
+    // Editing a quick-logged catch keeps its original time.
+    if (d.editIndex != null && S.catches[d.editIndex]) S.catches[d.editIndex] = { ...S.catches[d.editIndex], ...entry };
+    else S.catches.push({ date: Date.now(), ...entry });
     await store.set('catches', S.catches);
     S.logDraft = null; render(); toast('Catch saved 🐟');
   }
@@ -1252,6 +1388,12 @@ $app.addEventListener('click', async (e) => {
     a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
 });
+
+// Remember open/closed sections (the toggle event doesn't bubble, so listen in the capture phase).
+$app.addEventListener('toggle', (e) => {
+  const k = e.target.dataset && e.target.dataset.keep;
+  if (k) S.openState[k] = e.target.open;
+}, true);
 
 $app.addEventListener('submit', (e) => {
   if (e.target.dataset.act !== 'search') return;
@@ -1340,11 +1482,13 @@ window.addEventListener('offline', render);
   S.boxPhotos = await store.get('boxPhotos', []);
   S.profiles = await store.get('profiles', {});
   S.riverNotes = await store.get('rivernotes', {});
+  S.nudgeDismissed = await store.get('nudgeDismissed', false);
   S.reports = await store.get('reports');
   loadReports().then(() => { if (S.tab === 'water' && !isPicking()) render(); });
   S.prep = await store.get('prepMsg', '');
   const sess = await store.get('session');
   if (sess) {
+    S.hadSession = true;
     S.inputs = { ...DEFAULT_INPUTS, ...sess.inputs };
     S.manual = !!sess.manual;
     if (sess.site) { selectSite(sess.site); updateFavScores(); return; }

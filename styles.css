@@ -2,7 +2,7 @@
   --bg: #f4f1ea;
   --card: #ffffff;
   --ink: #16201a;
-  --muted: #5b665e;
+  --muted: #4a544d;
   --line: #d9d4c7;
   --brand: #14532d;
   --brand-ink: #ffffff;
@@ -79,7 +79,7 @@ body {
 main { max-width: 640px; margin: 0 auto; padding: 12px 16px; }
 .pad { padding: 16px; }
 .muted { color: var(--muted); }
-.small { font-size: 14px; }
+.small { font-size: 15px; }
 
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin: 0 0 14px; }
 .card h2 { font-size: 18px; margin: 0 0 8px; }
@@ -235,4 +235,40 @@ details.more > summary { cursor: pointer; font-weight: 700; padding: 8px 0; colo
 .tabs button.on { color: var(--brand); }
 .spin { display: inline-block; width: 18px; height: 18px; border: 3px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: sp 0.8s linear infinite; vertical-align: -3px; margin-right: 6px; }
 @keyframes sp { to { transform: rotate(360deg); } }
-.toast { position: fixed; left: 16px; right: 16px; bottom: calc(86px + env(safe-area-inset-bottom)); background: var(--ink); color: var(--bg); padding: 12px 16px; border-radius: 12px; z-index: 20; text-align: center; font-weight: 600; }
+.toast { position: fixed; left: 16px; right: 16px; bottom: calc(150px + env(safe-area-inset-bottom)); background: var(--ink); color: var(--bg); padding: 12px 16px; border-radius: 12px; z-index: 20; text-align: center; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; }
+.toast-action { background: var(--bg); color: var(--ink); min-height: 38px; padding: 6px 14px; font-weight: 700; }
+
+/* River tab: compact "Your spot", best bet preview, sticky action */
+.spot > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; }
+.spot > summary::-webkit-details-marker { display: none; }
+.spot-k { font-weight: 800; flex: none; }
+.spot-v { flex: 1; min-width: 0; font-size: 15px; color: var(--ink); }
+.spot-edit { flex: none; font-weight: 700; color: var(--brand); font-size: 15px; }
+.spot[open] .spot-edit { display: none; }
+.spot[open] > summary { margin-bottom: 4px; }
+.bestbet { border: 2px solid var(--brand); }
+.bestbet .rank { font-size: 14px; font-weight: 800; color: var(--brand); text-transform: uppercase; letter-spacing: .4px; }
+.bestbet h2 { font-size: 22px; margin: 2px 0 4px; }
+.spec { margin: 0; font-weight: 600; font-size: 16px; }
+.sticky-cta { position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 9; padding: 8px 16px; background: linear-gradient(to top, var(--bg) 70%, transparent); }
+.sticky-cta .btn-primary { max-width: 608px; display: block; margin: 0 auto; box-shadow: 0 4px 14px rgba(0, 0, 0, .18); }
+body:has(.sticky-cta) { padding-bottom: calc(140px + env(safe-area-inset-bottom)); }
+
+/* About this river: folding sections */
+.about .sec { border-top: 1px solid var(--line); }
+.about .sec > summary { cursor: pointer; padding: 11px 0; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.about .sec-sum { color: var(--muted); font-size: 15px; text-align: right; }
+.about .sec[open] > summary { padding-bottom: 4px; }
+
+/* Setups tab: best bet stands out, others compact */
+.setup.best { border: 2px solid var(--brand); }
+.setup.best h2 { font-size: 23px; }
+details.compact > summary { list-style: none; cursor: pointer; }
+details.compact > summary::-webkit-details-marker { display: none; }
+details.compact .more-link { display: inline-block; margin-top: 8px; font-weight: 700; color: var(--brand); font-size: 15px; }
+details.compact[open] .more-link { display: none; }
+details.compact h2 { font-size: 19px; }
+details.ask > summary { list-style: none; cursor: pointer; }
+details.ask > summary::-webkit-details-marker { display: none; }
+.summary .run-alert { margin: 10px 0 0; }
+.nudge { background: var(--warn-bg); color: var(--warn-ink); border-color: transparent; }
