@@ -64,6 +64,9 @@ export function scoreHatches(hatches, c) {
     const [lo, hi] = h.temp;
     const T = c.waterTempF;
     let tempF = T == null ? 0.7 : T >= lo && T <= hi ? 1 : (T >= lo - 3 && T <= hi + 3) ? 0.5 : 0.1;
+    // Some bugs need warm air too (hoppers fly on warm afternoons, not cool fall days).
+    const air = c.weather && c.weather.airF;
+    if (h.minAirF && air != null && air < h.minAirF && !seen) tempF *= 0.4;
     const timeF = h.time.includes(tod) ? 1 : 0.6;
     let s = h.base * monthF * tempF * timeF;
     for (const b of h.boost) if (c.sky.has(b)) s += 0.12;
@@ -322,9 +325,9 @@ function trout(c, kb, gear) {
   if (c.flowTrend === 'rising') notes.push('Flow is rising. Fish often feed hard early in a rise, then shut down as it muddies. Move to the soft edges.');
   if (c.flowTrend === 'falling' && isHigh(fb)) notes.push('High water that is dropping and clearing is often prime time for nymphs and streamers.');
   if (isLow(fb) && clar === 'clear') notes.push('Low, clear water: fish are spooky. Use long leaders and fine tippet, approach from downstream, and keep off the skyline.');
-  if (c.weather && c.weather.pressureTrend === 'falling') notes.push('The barometer is falling ahead of weather, which is often a strong bite window.');
-  if (c.weather && c.weather.pressureTrend === 'rising' && c.sky.has('sun')) notes.push('A bright day after a front usually means a tougher bite. Go smaller and deeper, tight to cover.');
-  if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F from air temps. Use a thermometer and enter the real reading for better advice.`);
+  if (c.weather && c.weather.pressureTrend === 'falling') notes.push('The barometer is falling ahead of weather. Many anglers find the bite picks up before a front (the evidence is mixed).');
+  if (c.weather && c.weather.pressureTrend === 'rising' && c.sky.has('sun')) notes.push('A bright day after a front often means a tougher bite. Go smaller and deeper, tight to cover.');
+  if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F ${c.tempNote || 'from air temps'}. A thermometer reading will sharpen the advice.`);
 
   const hatches = scoreHatches(allHatches(kb, c.river), c);
   const top = hatches[0];
@@ -346,6 +349,8 @@ function trout(c, kb, gear) {
     if (T < 45) { s -= 12; why.push('Cold water means a short, midday-only dry window.'); }
     if (c.tod === 'night') s -= 30;
     if (c.weather && c.weather.windMph > 15) { s -= 10; why.push('Wind will make drifts tricky.'); }
+    // Deep water: without rising fish, most trout are feeding near the bottom.
+    if (c.depthFt >= 6) { s -= 12; why.push('Deep water: fish the dry only if you see rises. Otherwise go subsurface.'); }
     if (top.h.boost.some((b) => c.sky.has(b))) why.push(`Today's weather (${[...c.sky].join(', ')}) suits this hatch.`);
     const size = top.h.size;
     const x = tippetX(size, clar, fb);
@@ -560,7 +565,7 @@ function steelhead(c, kb, gear) {
   if (c.flowTrend === 'falling' && (isHigh(fb) || clar === 'stained')) notes.push('Dropping and clearing after a rise is prime time. Fresh fish are moving.');
   if (c.flowTrend === 'rising') notes.push('Rising water often turns fish off for a while. Focus on the soft edges and tailouts.');
   if (c.lowLight) notes.push('Low light: steelhead are more willing to move for a swung fly.');
-  if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F. A thermometer reading will sharpen the sink-tip choice a lot.`);
+  if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F ${c.tempNote || 'from air temps'}. A thermometer reading will sharpen the sink-tip choice a lot.`);
   notes.push('Check local regulations. Some rivers restrict bait-like flies, beads or indicators.');
 
   // sink tip choice
@@ -606,8 +611,9 @@ function steelhead(c, kb, gear) {
   }
 
   // 2. Skated dry / dry line
-  if (T >= 50 && (clar === 'clear' || clar === 'slight') && !isHigh(fb)) {
-    let s = 40 + (T >= 55 ? 20 : 0) + (c.lowLight ? 10 : 0);
+  // Around 48°F and up, steelhead will rise to a waking fly (48°F is the commonly quoted surface threshold).
+  if (T >= 48 && (clar === 'clear' || clar === 'slight') && !isHigh(fb)) {
+    let s = 40 + (T >= 52 ? 20 : 0) + (c.lowLight ? 10 : 0);
     setups.push({
       key: 'skate', title: 'Dry line / skated fly', score: s,
       why: [`At ${T}°F, clear water steelhead will rise to a waking fly. It's the most exciting take there is.`],
@@ -668,8 +674,11 @@ function salmon(c, kb, gear) {
   notes.push('Fair hooking only: a fish should take the fly in its mouth. Snagging is illegal, lining ("flossing") fish is unsporting, and many rivers limit weights and hook sizes. Check current regulations.');
   notes.push('Target fresh, bright fish in runs and holes. Stay off spawning gravel (redds) and leave dark, spawning fish alone.');
   if (c.flowTrend === 'rising' || (c.flowTrend === 'falling' && isHigh(fb))) notes.push('A bump in flow pulls fresh fish in from the lake. Fish the runs they move through.');
-  if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F. A thermometer reading will sharpen this.`);
-  const cohoOn = c.river && (c.river.runs || []).some((r) => r.species === 'salmon' && /coho/i.test(r.label) && r.months.includes(c.month));
+  if (c.tempEstimated) notes.push(`Water temp is estimated at about ${T}°F ${c.tempNote || 'from air temps'}. A thermometer reading will sharpen this.`);
+  // Coho: chosen in the Setups menu, or (if you haven't picked) when this river's coho run is on.
+  const cohoOn = c.salmonKind === 'coho' || (c.salmonKind !== 'king'
+    && !!c.river && (c.river.runs || []).some((r) => r.species === 'salmon' && /coho/i.test(r.label) && r.months.includes(c.month)));
+  if (c.salmonKind === 'coho') notes.push('Coho are smaller and more aggressive than kings: a fast, erratic strip with bright flies often beats a slow swing. A 7-8wt is plenty.');
   const heavy = isHigh(fb) || c.depthFt >= 6;
   const lb = clar === 'clear' ? '12' : '15';
 
@@ -712,15 +721,18 @@ function salmon(c, kb, gear) {
     if (T >= 48 && T <= 60) s += 5;
     if (clar === 'clear' && c.sky.has('sun') && c.tod === 'midday') s -= 10;
     if (cohoOn) { s += 8; why.push('Coho are running. They love fast-stripped bright flies.'); }
-    const flies = [...sk.streamers[clar], ...(cohoOn ? sk.coho.slice(0, 2) : [])];
+    const onlyCoho = c.salmonKind === 'coho';
+    const flies = onlyCoho ? [...sk.coho.slice(0, 2), ...sk.streamers[clar]] : [...sk.streamers[clar], ...(cohoOn ? sk.coho.slice(0, 2) : [])];
+    // Coho: 10-12 lb is plenty and gets more grabs in clear water. Kings: 15-20 lb.
+    const leadLb = onlyCoho ? (clar === 'clear' ? '10-12' : '12') : lb === '12' ? '15' : '20';
     setups.push({
-      key: 'salstreamer', title: cohoOn ? 'Streamer (swing or strip) for kings and coho' : 'Swung or stripped streamer', score: s, why,
-      rod: pickRod(gear, { wt: 9, types: ['single', 'switch', 'spey'] }),
+      key: 'salstreamer', title: c.salmonKind === 'coho' ? 'Stripped streamer for coho' : cohoOn ? 'Streamer (swing or strip) for kings and coho' : 'Swung or stripped streamer', score: s, why,
+      rod: pickRod(gear, { wt: c.salmonKind === 'coho' ? 8 : 9, types: ['single', 'switch', 'spey'] }),
       line: heavy ? 'Sink-tip line, T-11 to T-14' : 'Sink-tip line, T-8, or an intermediate line',
       rig: [
         { kind: 'line', label: heavy ? 'Sink-tip line (heavy: T-11 to T-14)' : 'Sink-tip or intermediate line' },
         { kind: 'sinktip', label: heavy ? 'Heavy tip for high or deep water' : 'Medium tip' },
-        { kind: 'leader', label: `3-4 ft of ${lb === '12' ? '15' : '20'} lb tippet`, detail: 'Short leader keeps the fly down' },
+        { kind: 'leader', label: `3-4 ft of ${leadLb} lb tippet`, detail: 'Short leader keeps the fly down' },
         { kind: 'fly', label: flies[0], detail: 'Loop knot for more action' },
       ],
       flies: flies.map((n, i) => ({ name: n, role: i === 0 ? 'first choice' : 'alternate' })),

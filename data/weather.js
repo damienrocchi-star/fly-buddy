@@ -17,8 +17,10 @@ export async function getWeather(lat, lon) {
     hourly: 'pressure_msl',
     daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,sunrise,sunset',
     past_days: '3', forecast_days: '4',
-    temperature_unit: 'fahrenheit', wind_speed_unit: 'mph', precipitation_unit: 'inch', timezone: 'auto',
+    // Fetched in Open-Meteo's native metric units, stored in US units (cap: 'metric' records the original).
+    timezone: 'auto',
   });
+  const F = (c) => (c * 9) / 5 + 32, mph = (k) => k / 1.609, inch = (mm) => mm / 25.4;
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 20000);
   let j;
@@ -40,16 +42,16 @@ export async function getWeather(lat, lon) {
   const today = cur.time.slice(0, 10);
   const ti = j.daily.time.indexOf(today);
   const past = [];
-  for (let i = Math.max(0, ti - 3); i < ti; i++) past.push((j.daily.temperature_2m_max[i] + j.daily.temperature_2m_min[i]) / 2);
+  for (let i = Math.max(0, ti - 3); i < ti; i++) past.push(F((j.daily.temperature_2m_max[i] + j.daily.temperature_2m_min[i]) / 2));
   const days = j.daily.time.map((d, i) => ({
-    date: d, max: Math.round(j.daily.temperature_2m_max[i]), min: Math.round(j.daily.temperature_2m_min[i]),
-    precip: j.daily.precipitation_sum[i], code: j.daily.weather_code[i],
+    date: d, max: Math.round(F(j.daily.temperature_2m_max[i])), min: Math.round(F(j.daily.temperature_2m_min[i])),
+    precip: Math.round(inch(j.daily.precipitation_sum[i]) * 100) / 100, code: j.daily.weather_code[i],
     sunrise: j.daily.sunrise[i], sunset: j.daily.sunset[i],
   }));
   return {
-    fetchedAt: Date.now(),
-    airF: Math.round(cur.temperature_2m), cloud: cur.cloud_cover, precip: cur.precipitation,
-    windMph: Math.round(cur.wind_speed_10m), gustMph: Math.round(cur.wind_gusts_10m), code: cur.weather_code,
+    fetchedAt: Date.now(), cap: 'metric',
+    airF: Math.round(F(cur.temperature_2m)), cloud: cur.cloud_cover, precip: Math.round(inch(cur.precipitation) * 100) / 100,
+    windMph: Math.round(mph(cur.wind_speed_10m)), gustMph: Math.round(mph(cur.wind_gusts_10m)), code: cur.weather_code,
     pressure: Math.round(cur.pressure_msl), pressureTrend,
     past3AvgAirF: past.length ? Math.round(past.reduce((a, b) => a + b, 0) / past.length) : null,
     days: days.slice(Math.max(0, ti)),

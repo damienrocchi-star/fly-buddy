@@ -21,10 +21,12 @@ The first time you tap **Find gauges near me**, allow location access.
 
 ## Using it on the river
 1. **River tab:** find the nearest gauge, then tap ☆ to save your regular rivers.
-2. Pick the species, water clarity, type of water and depth. Add a thermometer reading if you have one.
-3. **Setups tab:** shows the top 3 rigs with the reasons for each, a top-to-bottom rig diagram, flies and tips.
-4. **Log tab:** log what worked. Setups that caught fish in similar conditions get ranked higher next time.
-5. **Gear tab:** add your rods and your fly box, so setups use the rods you own and mark the flies you have with ✓.
+2. **Your spot** starts filled in from the gauge (flow and trend). Change anything that looks wrong, and add a thermometer reading if you have one. If the gauge has no temperature sensor, the app borrows a nearby gauge's reading (marked ≈).
+3. **Setups tab:** shows the top 3 rigs with the reasons for each, a top-to-bottom rig diagram, flies and tips. Use **Show me setups for…** to pick a target (trout, steelhead, king salmon, coho) or one technique.
+4. **Log tab:** log what worked. Setups that caught fish in similar conditions get ranked higher next time. After 5 catches, "What's working for you" sums up your patterns.
+5. **More tab:** units (US, Metric or As captured), **📖 Learn** (plain-English explanations of lines, flies, knots and conditions), and your rods and fly box.
+
+Tap any **ⓘ** or dotted word to see what it means.
 
 **Before you lose signal:** on the River tab, tap **Download saved rivers for offline**.
 

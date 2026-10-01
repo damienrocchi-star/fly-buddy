@@ -187,6 +187,7 @@
       "name": "Terrestrials (hoppers, ants, beetles)",
       "months": [7, 8, 9],
       "temp": [56, 67],
+      "minAirF": 65,
       "regions": ["all"],
       "time": ["midday", "afternoon"],
       "boost": ["wind", "warm", "sun"],

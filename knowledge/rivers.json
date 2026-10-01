@@ -1,5 +1,13 @@
 {
   "_about": "River profiles: local knowledge the app adds to live conditions. A gauge matches a profile when its name contains one of 'match' (and not 'exclude') and it's in 'state', or its USGS id is in 'sites'. species: trout / steelhead / salmon. runs: months (1-12) fish are in the river, 'peak' = best months. hatches: extra local hatches, same format as hatches.json. dnr: words to look for in the Michigan DNR weekly report. feeds: RSS/Atom feeds of local shop reports (fetched daily by the GitHub Action). reports: links to other report pages. Facts are general and seasonal: always check current regulations. See README 'Adding a river profile'.",
+  "regs": {
+    "MI": [
+      { "name": "Michigan fishing regulations", "url": "https://www.michigan.gov/dnr/things-to-do/fishing/fishing-regulations" },
+      { "name": "Inland trout & salmon regulations map", "url": "https://experience.arcgis.com/experience/a3d3893c97e44d42b4ddcb8553cb805e" }
+    ],
+    "MT": [{ "name": "Montana fishing regulations", "url": "https://fwp.mt.gov/fish/regulations" }],
+    "default": [{ "name": "Find your state's fishing regulations", "url": "https://www.takemefishing.org/fishing-license/" }]
+  },
   "rivers": [
     {
       "name": "Pere Marquette",

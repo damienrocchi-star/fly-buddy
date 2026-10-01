@@ -66,8 +66,9 @@ export function rateConditions(cond, kb) {
   if (c.lowLight && !c.sky.has('overcast')) { wf += 0.2; wn.push('low light'); }
   if (c.sky.has('sun') && c.tod === 'midday') { wf -= 0.25; wn.push('bright midday sun'); }
   const pt = c.weather && c.weather.pressureTrend;
-  if (pt === 'falling') { wf += 0.2; wn.push('falling barometer'); }
-  if (pt === 'rising' && c.sky.has('sun')) { wf -= 0.2; wn.push('bluebird day after a front'); }
+  // Barometer: anglers swear by it but the evidence is weak, so it only nudges.
+  if (pt === 'falling') { wf += 0.1; wn.push('falling barometer'); }
+  if (pt === 'rising' && c.sky.has('sun')) { wf -= 0.1; wn.push('bluebird day after a front'); }
   if (c.weather && c.weather.windMph >= 15) { wf -= 0.2; wn.push('windy'); }
   if (!c.weather) wn.push('no weather data');
   add('weather', 'Weather & light', wf, wn.length ? wn.join(', ') : 'average');

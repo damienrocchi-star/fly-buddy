@@ -6,8 +6,9 @@ import { recommend, regionFor, estimateWaterTempF, runInfo, monthRange, allHatch
 import { rateConditions } from './engine/rating.js';
 import { extractSignals, observationSignals, mergeSignals, OBS_MAX_AGE_MS } from './engine/report-signals.js';
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
+import { fmt, val, unitOf, fromInput, localize, setUnitMode, unitMode, UNIT_MODES } from './units.js';
 
-const APP_VERSION = '10'; // keep in step with CACHE in sw.js
+const APP_VERSION = '11'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -20,7 +21,8 @@ const DEFAULT_INPUTS = {
 const S = {
   tab: 'water', picking: false, kb: null, favScores: {}, noaaFc: null,
   profiles: {}, riverNotes: {}, reports: null, profileOpen: false,
-  openState: {}, hadSession: false, nudgeDismissed: false, observed: {}, gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
+  openState: {}, hadSession: false, nudgeDismissed: false, observed: {},
+  spotOverride: {}, tempEst: {}, favForecast: {}, setupFilter: 'all', gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -78,7 +80,7 @@ function gps() {
 // ---------- data loading ----------
 
 async function loadKB() {
-  const names = ['hatches', 'flies', 'steelhead', 'rating', 'rivers', 'salmon', 'report-signals'];
+  const names = ['hatches', 'flies', 'steelhead', 'rating', 'rivers', 'salmon', 'report-signals', 'learn'];
   const files = await Promise.all(names.map((n) => fetch(`knowledge/${n}.json`).then((r) => r.json())));
   return Object.fromEntries(names.map((n, i) => [n, files[i]]));
 }
@@ -108,6 +110,8 @@ function riverProfile(site) {
 }
 
 async function selectSite(basic) {
+  // Flow/trend you set in "Your spot" apply to that river only.
+  S.spotOverride = S.spotOverride[basic.id] ? { [basic.id]: S.spotOverride[basic.id] } : {};
   S.site = { ...basic }; S.manual = false; S.loading = 'Getting river conditions…';
   S.wx = null; S.stats = null; S.flow = null; S.offline = false; S.loadError = null;
   render();
@@ -142,6 +146,30 @@ async function selectSite(basic) {
   saveSession();
   render();
   if (S.site.lat != null) loadNoaa(S.site);
+  if (S.site.waterTempF == null && S.site.lat != null) {
+    estimateNearbyTemp(S.site).then((ok) => { if (ok && S.tab !== 'gear') { const y = window.scrollY; render(); window.scrollTo(0, y); } });
+  }
+}
+
+// No temperature sensor on this gauge: borrow the nearest gauge that has one, preferring the same
+// river, within about 30 miles. Cached for 6 hours. Falls back to the air-temperature model.
+async function estimateNearbyTemp(site) {
+  const cached = S.tempEst[site.id];
+  if (cached && Date.now() - cached.at < 6 * 3600e3) return true;
+  if (!navigator.onLine) return false;
+  try {
+    const list = await findNearby(site.lat, site.lon);
+    const river = (riverKey(site) || '').split('|')[0].replace(/\s+(river|creek|r)$/, '');
+    const pick = list
+      .filter((s) => s.id !== site.id && s.waterTempF != null && s.dist <= 30)
+      .map((s) => ({ s, score: s.dist * (river && s.name.toLowerCase().includes(river) ? 0.5 : 1) }))
+      .sort((a, b) => a.score - b.score)[0];
+    if (!pick) return false;
+    const from = pick.s.name.replace(/,?\s*[A-Z]{2}$/, '');
+    S.tempEst[site.id] = { tempF: pick.s.waterTempF, from, dist: pick.s.dist, at: Date.now() };
+    store.set('tempEst', S.tempEst);
+    return true;
+  } catch (e) { return false; }
 }
 
 async function findNearMe() {
@@ -264,15 +292,24 @@ async function toggleObs(group, value) {
 function condFor(site, wx, flow, useOverride) {
   const i = S.inputs;
   const override = useOverride && i.tempOverride !== '' && !isNaN(+i.tempOverride) ? Math.round(+i.tempOverride) : null;
-  let waterTempF = override, tempSource = override != null ? 'your reading' : null;
+  let waterTempF = override, tempSource = override != null ? 'your reading' : null, tempNote = null, tempEstimated = false;
   if (waterTempF == null && site && site.waterTempF != null) { waterTempF = site.waterTempF; tempSource = 'gauge'; }
+  // No sensor on this gauge: borrow a nearby gauge's reading (see estimateNearbyTemp).
+  const est = site && S.tempEst[site.id];
+  if (waterTempF == null && est && Date.now() - est.at < 12 * 3600e3) {
+    waterTempF = est.tempF; tempEstimated = true;
+    tempSource = `est. from ${est.from}`; tempNote = `from the ${est.from} gauge (${Math.round(est.dist)} mi away)`;
+  }
   const sun = sunFor(wx);
   const lon = site ? site.lon : S.gps ? S.gps.lon : null;
+  // "Your spot" flow/trend: your choice if you've changed it, otherwise the gauge's.
+  const ov = useOverride && site ? S.spotOverride[site.id] : null;
   return {
     species: i.species, clarity: i.clarity, waterType: i.waterType, depthFt: +i.depthFt,
-    waterTempF, tempSource,
-    flowBand: site ? flow && flow.band : (i.flowBand === 'unknown' ? null : i.flowBand),
-    flowTrend: site ? site.trend : i.trend,
+    salmonKind: i.salmonKind || null,
+    waterTempF, tempSource, tempNote, tempEstimated,
+    flowBand: site ? (ov && ov.band) || (flow && flow.band) : (i.flowBand === 'unknown' ? null : i.flowBand),
+    flowTrend: site ? (ov && ov.trend) || site.trend : i.trend,
     weather: site ? wx || null : manualWeather(),
     sunrise: sun.sunrise, sunset: sun.sunset,
     region: regionFor(lon),
@@ -295,24 +332,29 @@ function currentRating() {
 // Today (actual conditions) plus the next 3 days (forecast). Site mode only.
 function forecastRatings() {
   if (S.manual || !S.wx || !S.wx.days || !S.wx.days.length) return [];
-  const base = currentConditions();
-  const days = S.wx.days.slice(0, 4);
+  return forecastFor(currentConditions(), S.wx, S.stats, S.noaaFc, currentRating());
+}
+
+// Score today and the next 3 days for any river from its saved data.
+function forecastFor(base, wx, stats, noaaFc, todayRating) {
+  if (!wx || !wx.days || !wx.days.length) return [];
+  const days = wx.days.slice(0, 4);
   const avg = (d) => (d.max + d.min) / 2;
   const month = new Date().getMonth() + 1;
-  const baseT = base.waterTempF != null ? base.waterTempF : estimateWaterTempF(S.wx.past3AvgAirF, month);
+  const baseT = base.waterTempF != null ? base.waterTempF : estimateWaterTempF(wx.past3AvgAirF, month);
   const worse = { clear: 'slight', slight: 'stained', stained: 'muddy', muddy: 'muddy' };
   return days.map((d, i) => {
-    if (i === 0) return { date: d.date, rating: currentRating(), src: 'now', notes: [], code: d.code, max: d.max, min: d.min };
+    if (i === 0) return { date: d.date, rating: todayRating || rateConditions(base, S.kb), src: 'now', notes: [], code: d.code, max: d.max, min: d.min };
     const date = new Date(`${d.date}T13:00`);
     // Water temp follows air temp slowly.
     const waterTempF = Math.round(Math.max(33, Math.min(80, baseT + 0.35 * (avg(d) - avg(days[0])))));
     let flowBandX = base.flowBand, trend = 'steady', src = 'weather', clarity = base.clarity;
     const notes = [];
-    const fc = S.noaaFc && S.noaaFc[d.date];
-    if (fc != null && S.stats) {
-      const fbx = flowBand(fc, S.stats, date);
+    const fc = noaaFc && noaaFc[d.date];
+    if (fc != null && stats) {
+      const fbx = flowBand(fc, stats, date);
       if (fbx) { flowBandX = fbx.band; src = 'noaa'; notes.push(`NOAA forecast: ${fc.toLocaleString()} cfs`); }
-      const prev = S.noaaFc[days[i - 1].date];
+      const prev = noaaFc[days[i - 1].date];
       if (prev) trend = fc > prev * 1.08 ? 'rising' : fc < prev * 0.92 ? 'falling' : 'steady';
     }
     const prevRain = days[i - 1].precip || 0, rain = d.precip || 0;
@@ -323,7 +365,9 @@ function forecastRatings() {
     }
     const cloud = d.code <= 1 ? 15 : d.code === 2 ? 50 : 90;
     const cond = {
-      ...base, now: date, tod: 'afternoon', waterTempF, tempEstimated: true, flowBand: flowBandX, flowTrend: trend, clarity,
+      // What you saw today doesn't carry into future days.
+      ...base, observed: null, reportSignals: null,
+      now: date, tod: 'afternoon', waterTempF, tempEstimated: true, flowBand: flowBandX, flowTrend: trend, clarity,
       weather: { cloud, precip: d.code >= 51 ? 0.05 : 0, windMph: null, pressureTrend: 'steady', airF: d.max },
     };
     return { date: d.date, rating: rateConditions(cond, S.kb), src, notes, code: d.code, max: d.max, min: d.min };
@@ -351,8 +395,12 @@ async function updateFavScores(forceFetch = false) {
         } catch (e) { /* keep saved data */ }
       }
       if (!site) { S.favScores[f.id] = null; continue; }
-      const r = rateConditions(condFor(site, wx, flowBand(site.cfs, stats), false), S.kb);
+      const base = condFor(site, wx, flowBand(site.cfs, stats), false);
+      const r = rateConditions(base, S.kb);
       S.favScores[f.id] = { ...r, at: site.fetchedAt };
+      // Today + next 3 days for "Where should I go?".
+      S.favForecast[f.id] = forecastFor(base, wx, stats, await store.get(`noaafc:${f.id}`), r)
+        .map((d) => ({ date: d.date, score: d.rating.score, level: d.rating.level }));
       if (S.tab === 'water' && isPicking()) render();
     }
   } finally { favRefreshing = false; }
@@ -395,8 +443,40 @@ function viewWater() {
   return isPicking() ? viewPicker() : viewChosen();
 }
 
+// "Where should I go?": your saved rivers ranked across today and the next 3 days.
+function viewWhereToGo() {
+  if (S.favorites.length < 2) return '';
+  const month = new Date().getMonth() + 1, sp = S.inputs.species;
+  const dayName = (d) => {
+    const t = new Date(); t.setHours(0, 0, 0, 0);
+    const x = new Date(`${d}T00:00`);
+    const n = Math.round((x - t) / 864e5);
+    return n <= 0 ? 'Today' : n === 1 ? 'Tomorrow' : x.toLocaleDateString([], { weekday: 'long' });
+  };
+  const options = [];
+  S.favorites.forEach((f, k) => {
+    for (const d of S.favForecast[f.id] || []) options.push({ f, k, ...d });
+  });
+  if (!options.length) return '';
+  options.sort((a, b) => b.score - a.score);
+  const seen = new Set();
+  const top = options.filter((o) => !seen.has(o.f.id) && seen.add(o.f.id)).slice(0, 3);
+  const runNote = (f) => {
+    const p = riverProfile({ ...f });
+    if (!p || sp === 'trout') return '';
+    const ri = runInfo(p, sp, month);
+    return ri.status === 'peak' ? ` · ${ri.run.label} peak` : ri.status === 'in' ? ` · ${ri.run.label} in` : '';
+  };
+  return `<div class="card where"><h2>🧭 Where should I go?</h2>
+    <p class="small muted" style="margin-top:0">Your saved rivers for ${SPECIES_LABEL[sp].toLowerCase()}, best day for each over the next few days.</p>
+    <ul class="site-list">${top.map((o, i) => `<li><button data-act="fav" data-k="${o.k}">
+      <span><span class="nm">${i === 0 ? '🏆 ' : ''}${esc(o.f.name.replace(/,?\s*[A-Z]{2}$/, ''))}</span><br><span class="small muted">${dayName(o.date)}${esc(runNote(o.f))}</span></span>
+      <span class="chip-score lvl-${o.level}">${o.score}</span></button></li>`).join('')}</ul>
+    <p class="small muted" style="margin:6px 0 0">Future days use the weather forecast (and NOAA flow forecasts where available).</p></div>`;
+}
+
 function viewPicker() {
-  let h = '';
+  let h = viewWhereToGo();
   const canGoBack = S.site || S.manual;
   h += `<div class="card"><div class="site-head"><h2>Where are you fishing?</h2>${canGoBack ? '<button class="linkish" data-act="back">Cancel</button>' : ''}</div>
     <form class="inline" data-act="search" style="margin-bottom:10px">
@@ -412,7 +492,7 @@ function viewPicker() {
   if (S.nearby) {
     if (S.nearbyTitle) h += `<h3>${esc(S.nearbyTitle)}</h3>`;
     h += S.nearby.length ? `<ul class="site-list">${S.nearby.map((s, k) => `<li><button data-act="pick" data-k="${k}">
-      <span><span class="nm">${esc(s.name)}</span><br><span class="small muted">${s.cachedOnly ? 'saved offline' : [s.cfs != null ? `${Math.round(s.cfs).toLocaleString()} cfs` : '', s.waterTempF != null ? `${s.waterTempF}°F` : ''].filter(Boolean).join(' · ')}</span></span>
+      <span><span class="nm">${esc(s.name)}</span><br><span class="small muted">${s.cachedOnly ? 'saved offline' : [s.cfs != null ? fmt('flow', s.cfs, 'us') : '', s.waterTempF != null ? fmt('temp', s.waterTempF, 'metric') : ''].filter(Boolean).join(' · ')}</span></span>
       <span class="meta">${s.dist != null ? `${s.dist.toFixed(1)} mi` : '›'}</span></button></li>`).join('')}</ul>` : `<p class="muted">${S.query ? 'No live gauges found. Try a shorter name (e.g. "Pere Marquette"), or a nearby town like "Baldwin, MI".' : 'No gauges found nearby.'}</p>`;
   }
   if (S.favorites.length) {
@@ -464,14 +544,15 @@ function viewScore() {
   const min = minScore();
   let h = `<div class="card score-card">
     <div class="score-row">${scoreRing(r.score, r.level)}
-      <div><div class="score-label lvl-${r.level}">${esc(r.label)} <span class="muted small">· ${r.score}/100</span></div>
-      <div class="small">${esc(r.summary)}</div></div></div>`;
+      <div><div class="score-label lvl-${r.level}">${esc(r.label)} <span class="muted small">· ${r.score}/100</span> ${info('score', 'How the score works')}</div>
+      <div class="small">${esc(localize(r.summary))}</div></div></div>`;
   if (r.score < min) h += `<div class="alert caution" style="margin:10px 0 0">Below your minimum of ${min}. Probably not worth the trip today.</div>`;
+  const FACTOR_INFO = { temp: 'watertemp', flow: 'flow', trend: 'trend', clarity: 'clarity', weather: 'light', hatch: 'hatch', run: 'run' };
   h += `<details class="more"><summary>How this score works</summary>
     ${r.factors.map((f) => (f.bonus
-    ? `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts > 0 ? '+' : ''}${f.pts}</b></div><div class="small muted">${esc(f.note)}</div></div>`
-    : `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts}/${f.max}</b></div>
-      <div class="bar"><span style="width:${Math.round(f.frac * 100)}%"></span></div><div class="small muted">${esc(f.note)}</div></div>`)).join('')}
+    ? `<div class="factor"><div class="factor-top"><span>${esc(f.label)}</span><b>${f.pts > 0 ? '+' : ''}${f.pts}</b></div><div class="small muted">${esc(localize(f.note))}</div></div>`
+    : `<div class="factor"><div class="factor-top"><span>${esc(f.label)} ${FACTOR_INFO[f.key] ? info(FACTOR_INFO[f.key]) : ''}</span><b>${f.pts}/${f.max}</b></div>
+      <div class="bar"><span style="width:${Math.round(f.frac * 100)}%"></span></div><div class="small muted">${esc(localize(f.note))}</div></div>`)).join('')}
     <p class="small muted">Scores use your "Your spot" choices above (species and clarity matter most). Tune the weights in knowledge/rating.json.</p></details>`;
   return h + `</div>`;
 }
@@ -485,8 +566,8 @@ function viewForecast() {
     const dayName = (d, i) => (i === 0 ? 'Today' : new Date(`${d}T12:00`).toLocaleDateString([], { weekday: 'short' }));
     h += `<div class="card"><h2>Next few days</h2><div class="fc">${fc.map((d, i) => `<div class="${d.rating.score >= min ? '' : 'below'}">
       <b>${dayName(d.date, i)}</b><br><span class="chip-score lvl-${d.rating.level}">${d.rating.score}</span><br>
-      <span class="small">${d.max}°/${d.min}°</span><br><span class="muted small">${esc(codeText(d.code))}</span></div>`).join('')}</div>`;
-    const notes = fc.flatMap((d, i) => d.notes.map((n) => `${dayName(d.date, i)}: ${n}`));
+      <span class="small">${fmt('temp', d.max, 'metric').replace(/[CF]$/, '')}/${fmt('temp', d.min, 'metric').replace(/°[CF]$/, '°')}</span><br><span class="muted small">${esc(codeText(d.code))}</span></div>`).join('')}</div>`;
+    const notes = fc.flatMap((d, i) => d.notes.map((n) => `${dayName(d.date, i)}: ${localize(n)}`));
     const noaa = fc.some((d) => d.src === 'noaa');
     h += `<p class="small muted" style="margin:8px 0 0">${notes.map(esc).join('<br>')}${notes.length ? '<br>' : ''}Future days: ${noaa ? 'NOAA river forecast plus' : 'no NOAA flow forecast for this gauge right now, so based on'} the weather forecast. Water temps are estimated.</p></div>`;
   }
@@ -520,6 +601,104 @@ function viewRunAlert() {
   }).join('');
 }
 
+// ---------- Learn: ⓘ buttons, a bottom sheet, and links on rig terms ----------
+
+const learnEntry = (id) => (S.kb.learn.entries || []).find((e) => e.id === id);
+const info = (id, label = 'What is this?') => `<button class="info" data-act="learn" data-id="${id}" aria-label="${esc(label)}">ⓘ</button>`;
+
+// Terms in setup and rig text that get a dotted underline linking to Learn (specific words only, so it
+// never turns into a page of links).
+const LINK_TERMS = ['T-14', 'T-11', 'T-8', 'T-4', 'sink tip', 'Sink tip', 'polyleader', 'Polyleader', 'Skagit', 'Scandi', 'running line',
+  'fluoro', 'nylon', 'Maxima', 'Tippet ring', 'tippet ring', 'Indicator', 'split shot', 'shot', 'sighter', 'hook bend', 'Loop knot',
+  'loop knot', 'Clinch knot', 'tungsten', 'intermediate', 'Floating fly line', 'Mono rig', 'Glo Bug', 'Bead Egg', 'Intruder',
+  '0X', '1X', '2X', '3X', '4X', '5X', '6X', '7X', 'Riffle hitch', 'polyleader', 'spey', 'switch'];
+let termIndex = null;
+function termId(term) {
+  if (!termIndex) {
+    termIndex = {};
+    for (const e of S.kb.learn.entries) for (const t of e.terms || []) termIndex[t.toLowerCase()] = e.id;
+  }
+  return termIndex[term.toLowerCase()];
+}
+// Escaped text -> same text with up to `max` first mentions of known terms linked (each term once per card).
+function linkTerms(escaped, used, max = 4) {
+  let out = escaped;
+  for (const t of LINK_TERMS) {
+    if (used.size >= max) break;
+    const id = termId(t);
+    if (!id || used.has(id)) continue;
+    const re = new RegExp(`(^|[^\\w-])(${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?![\\w-])`);
+    if (!re.test(out)) continue;
+    out = out.replace(re, (m, pre, word) => `${pre}<button class="term" data-act="learn" data-id="${id}">${word}</button>`);
+    used.add(id);
+  }
+  return out;
+}
+
+const RIG_SVG = {
+  dropper: `<svg viewBox="0 0 260 90" class="learn-svg" role="img" aria-label="Dropper tied to the bend of the first fly's hook">
+    <line x1="10" y1="20" x2="110" y2="20" stroke="currentColor" stroke-width="2"/><text x="10" y="14" font-size="11" fill="currentColor">tippet</text>
+    <path d="M110 20 v18 a8 8 0 0 1 -16 0" fill="none" stroke="currentColor" stroke-width="2.5"/><ellipse cx="110" cy="24" rx="6" ry="9" fill="#a16207"/>
+    <text x="78" y="62" font-size="11" fill="currentColor">fly 1</text>
+    <path d="M102 46 Q150 60 200 50" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="118" y="76" font-size="11" fill="currentColor">16-24 in, clinch knot on the bend</text>
+    <path d="M200 50 v14 a6 6 0 0 1 -12 0" fill="none" stroke="currentColor" stroke-width="2"/><ellipse cx="200" cy="53" rx="4" ry="6" fill="#6b7280"/>
+    <text x="210" y="44" font-size="11" fill="currentColor">fly 2</text></svg>`,
+  indicator: `<svg viewBox="0 0 120 230" class="learn-svg tall" role="img" aria-label="Indicator rig from top to bottom">
+    <line x1="30" y1="5" x2="30" y2="215" stroke="currentColor" stroke-width="1.5"/>
+    <circle cx="30" cy="45" r="10" fill="#f97316"/><text x="48" y="49" font-size="11" fill="currentColor">indicator</text>
+    <text x="48" y="80" font-size="10" fill="currentColor">1.5-2× depth</text>
+    <circle cx="30" cy="120" r="4" fill="#6b7280"/><circle cx="30" cy="131" r="4" fill="#6b7280"/><text x="48" y="129" font-size="11" fill="currentColor">split shot</text>
+    <ellipse cx="30" cy="160" rx="5" ry="8" fill="#a16207"/><text x="48" y="164" font-size="11" fill="currentColor">point fly</text>
+    <ellipse cx="30" cy="207" rx="4" ry="6" fill="#6b7280"/><text x="48" y="211" font-size="11" fill="currentColor">dropper</text></svg>`,
+};
+
+function openLearn(id) {
+  const e = learnEntry(id);
+  if (!e) return;
+  document.querySelectorAll('.sheet-wrap').forEach((x) => x.remove());
+  const rel = (e.related || []).map(learnEntry).filter(Boolean);
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-wrap';
+  wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-t">
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-head"><h2 id="sheet-t">${esc(e.title)}</h2><button class="sheet-x" aria-label="Close">✕</button></div>
+    ${e.svg && RIG_SVG[e.svg] ? RIG_SVG[e.svg] : ''}
+    <p>${esc(localize(e.body))}</p>
+    ${e.link ? `<p><a href="${esc(e.link)}" target="_blank" rel="noopener">Learn more ↗</a></p>` : ''}
+    ${rel.length ? `<div class="sheet-rel"><span class="small muted">Related:</span> ${rel.map((r) => `<button class="chip" data-learn="${r.id}">${esc(r.title)}</button>`).join('')}</div>` : ''}
+  </div>`;
+  const close = () => wrap.remove();
+  wrap.addEventListener('click', (ev) => {
+    if (ev.target === wrap || ev.target.closest('.sheet-x')) close();
+    const r = ev.target.closest('[data-learn]');
+    if (r) openLearn(r.dataset.learn);
+  });
+  // Swipe down to close.
+  let y0 = null;
+  const sheet = wrap.querySelector('.sheet');
+  sheet.addEventListener('touchstart', (ev) => { y0 = ev.touches[0].clientY; }, { passive: true });
+  sheet.addEventListener('touchend', (ev) => { if (y0 != null && ev.changedTouches[0].clientY - y0 > 80) close(); y0 = null; });
+  document.addEventListener('keydown', function onKey(ev) { if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } });
+  document.body.appendChild(wrap);
+  wrap.querySelector('.sheet-x').focus();
+}
+
+// The Learn screen (More tab): search plus every entry grouped.
+function viewLearn() {
+  const q = (S.learnQ || '').toLowerCase().trim();
+  const L = S.kb.learn;
+  const match = (e) => !q || e.title.toLowerCase().includes(q) || (e.terms || []).some((t) => t.toLowerCase().includes(q)) || e.body.toLowerCase().includes(q);
+  const groups = L.groups.map(([g, label]) => [label, L.entries.filter((e) => e.group === g && match(e))]).filter(([, es]) => es.length);
+  return `<div class="card"><h2>📖 Learn</h2>
+    <p class="small muted" style="margin-top:0">Plain-English explanations of conditions, lines, flies, techniques and knots. Tap ⓘ or any dotted word in the app to jump here.</p>
+    <input type="search" id="learnq" placeholder="Search, e.g. T-11, 5X, Skagit, moon" value="${esc(S.learnQ || '')}" autocomplete="off">
+    ${groups.map(([label, es]) => `<details class="sec" ${keep(`learn-${label}`, !!q)}><summary><b>${esc(label)}</b><span class="sec-sum">${es.length}</span></summary>
+      <ul class="learn-list">${es.map((e) => `<li><button class="linkish" data-act="learn" data-id="${e.id}">${esc(e.title)}</button></li>`).join('')}</ul></details>`).join('')}
+    ${!groups.length ? '<p class="muted">Nothing matches that. Try a shorter word.</p>' : ''}
+  </div>`;
+}
+
 // Remembers which <details> sections are open across re-renders: data-keep="key".
 function keep(key, defaultOpen = false) {
   const open = S.openState[key] ?? defaultOpen;
@@ -530,22 +709,54 @@ const CLARITY_LABEL = { clear: 'Clear', slight: 'Slight tint', stained: 'Stained
 const WATER_LABEL = { riffle: 'Riffle', run: 'Run', pool: 'Pool', pocket: 'Pocket water', flat: 'Flat/glide' };
 
 // "Your spot": a one-line summary that opens to the choices that drive the score and setups.
+const FLOW_LABEL = { 'very low': 'Very low', low: 'Low', normal: 'Normal', high: 'High', 'very high': 'Very high' };
+const TREND_LABEL = { rising: 'Rising', steady: 'Steady', falling: 'Dropping' };
+
+// Water temp being used right now and where it came from (thermometer, gauge, nearby gauge, estimate).
+function tempNow() {
+  const c = currentConditions();
+  const T = c.waterTempF != null ? c.waterTempF : prepare(c).waterTempF;
+  const src = c.tempSource || (c.waterTempF == null ? 'estimated from air temps' : '');
+  return { T, src, estimated: c.waterTempF == null || c.tempEstimated, entered: S.inputs.tempUnit };
+}
+
+// "Your spot": a one-line summary that opens to the choices that drive the score and setups.
+// Flow and trend start from the gauge; tap to change them for this river.
 function viewSpot() {
   const i = S.inputs;
-  const temp = i.tempOverride !== '' ? `${i.tempOverride}°F` : (S.site && S.site.waterTempF != null && !S.manual ? `${S.site.waterTempF}°F gauge` : 'temp estimated');
-  const summary = [SPECIES_LABEL[i.species] || 'Trout', CLARITY_LABEL[i.clarity], `${WATER_LABEL[i.waterType]} ${i.depthFt} ft`, temp].join(' · ');
+  const site = S.manual ? null : S.site;
+  const ov = site ? S.spotOverride[site.id] || {} : {};
+  const gaugeBand = S.flow && S.flow.band, gaugeTrend = site && site.trend;
+  const band = ov.band || gaugeBand, trend = ov.trend || gaugeTrend;
+  const t = tempNow();
+  const tempCap = i.tempOverride !== '' ? (t.entered || 'us') : (site && site.waterTempF != null ? 'metric' : 'us');
+  const tempText = `${t.estimated ? '≈' : ''}${fmt('temp', t.T, tempCap)}`;
+  const summary = [SPECIES_LABEL[i.species] || 'Trout', CLARITY_LABEL[i.clarity],
+    site && band ? `flow ${band}` : null, `${WATER_LABEL[i.waterType]} ${fmt('len', +i.depthFt)}`, tempText].filter(Boolean).join(' · ');
   const o = currentObs();
   const seen = o && obsText(o);
+  const tag = (isOv) => `<span class="src-tag">${isOv ? 'your choice' : 'from gauge'}</span>`;
+  const flowChips = (field, opts, current) => `<div class="chips">${opts.map(([v, l]) =>
+    `<button class="chip ${current === v ? 'on' : ''}" data-act="spotov" data-f="${field}" data-v="${v}">${l}</button>`).join('')}</div>`;
+  // Water that's high and rising, or rain you've reported, usually colors up: suggest checking clarity.
+  const colorRisk = (['high', 'very high'].includes(band) && trend === 'rising') || (o && (o.water || []).includes('rain'));
+  const gaugeRows = site ? `
+    <label class="field">Flow vs normal ${info('flow')} ${band ? tag(!!ov.band) : ''}</label>${flowChips('band', Object.entries(FLOW_LABEL), band)}
+    <label class="field">Trend ${info('trend')} ${trend ? tag(!!ov.trend) : ''}</label>${flowChips('trend', Object.entries(TREND_LABEL), trend)}
+    ${ov.band || ov.trend ? '<p class="small" style="margin:-4px 0 8px"><button class="linkish" data-act="usegauge">Use gauge values</button></p>' : ''}` : '';
   return `<details class="card spot" ${keep('spot', !S.hadSession)}>
     <summary><span class="spot-k">Your spot</span><span class="spot-v">${esc(summary)}${seen ? `<span class="obs-line">👀 ${esc(seen)} · ${ago(o.at)}</span>` : ''}</span><span class="spot-edit">Change</span></summary>
     ${viewObserve(o)}
     <label class="field">Fishing for</label>${speciesChips(i.species, S.manual ? null : riverProfile(S.site))}
-    <label class="field">Water clarity</label>${chips('clarity', [['clear', 'Clear'], ['slight', 'Slight tint'], ['stained', 'Stained'], ['muddy', 'Muddy']], i.clarity)}
+    ${gaugeRows}
+    <label class="field">Water clarity ${info('clarity')}</label>${chips('clarity', [['clear', 'Clear'], ['slight', 'Slight tint'], ['stained', 'Stained'], ['muddy', 'Muddy']], i.clarity)}
+    ${colorRisk && i.clarity === 'clear' ? '<p class="hint-line">💧 High, rising water or rain usually colors the river: check and set clarity.</p>' : ''}
     <label class="field">Type of water</label>${chips('waterType', [['riffle', 'Riffle'], ['run', 'Run'], ['pool', 'Pool'], ['pocket', 'Pocket water'], ['flat', 'Flat / glide']], i.waterType)}
-    <label class="field">Depth where fish hold: <span id="dv">${i.depthFt}</span> ft</label>
+    <label class="field">Depth where fish hold: <span id="dv">${fmt('len', +i.depthFt)}</span></label>
     <input type="range" min="1" max="10" step="0.5" value="${i.depthFt}" data-in="depthFt">
-    <label class="field">Water temp from your thermometer (°F, optional)</label>
-    <input type="number" inputmode="decimal" placeholder="${S.site && S.site.waterTempF != null && !S.manual ? `gauge says ${S.site.waterTempF}°F` : 'e.g. 52'}" value="${esc(i.tempOverride)}" data-in="tempOverride">
+    <label class="field">Water temp ${info(t.estimated ? 'estimated' : 'watertemp')} <span class="src-tag">${esc(i.tempOverride !== '' ? 'your thermometer' : t.src || '')}</span></label>
+    <input type="number" inputmode="decimal" placeholder="${esc(`${tempText} now. Type your thermometer reading (${unitOf('temp')})`)}"
+      value="${i.tempOverride !== '' ? val('temp', +i.tempOverride, t.entered || 'us') : ''}" data-in="tempOverride">
   </details>`;
 }
 
@@ -582,9 +793,9 @@ function viewBestBet() {
   return `<div class="card bestbet">
     <div class="rank">🎣 Best bet right now</div>
     <h2>${esc(s.title)}</h2>
-    ${stop ? `<p class="danger" style="margin:0 0 6px">🛑 ${esc(stop.text)}</p>` : ''}
-    <p class="spec">${esc(keySpec(s))}</p>
-    <p class="small" style="margin:4px 0 0">${esc(s.why[0] || '')}</p>
+    ${stop ? `<p class="danger" style="margin:0 0 6px">🛑 ${esc(localize(stop.text))}</p>` : ''}
+    <p class="spec">${esc(localize(keySpec(s)))}</p>
+    <p class="small" style="margin:4px 0 0">${esc(localize(s.why[0] || ''))}</p>
     <p style="margin:10px 0 0"><button class="linkish" data-tab="setups">See all setups, rigs and flies →</button></p>
   </div>`;
 }
@@ -712,6 +923,9 @@ function viewAbout() {
       <div class="btn-row" style="margin-top:8px"><button data-act="profclip">📋 Paste from clipboard</button><button data-act="saveprofile">Save profile</button></div></details>`;
   }
   if (p && p.local) h += `<p class="small" style="margin:8px 0 0"><button class="linkish" data-act="shareprofile">Copy profile to share</button> · <button class="linkish danger" data-act="delprofile">Remove profile</button></p>`;
+  const regs = S.kb.rivers.regs || {}, st = (key.split('|')[1] || '').toUpperCase();
+  const regLinks = regs[st] || regs.default || [];
+  if (regLinks.length) h += `<p class="small regs" style="margin:10px 0 0">⚖️ Check regulations: ${regLinks.map((r) => `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name)} ↗</a>`).join(' · ')}<br><span class="muted">Seasons, limits and gear rules change: check before you fish.</span></p>`;
   return h + '</div>';
 }
 
@@ -812,21 +1026,28 @@ function viewConditions() {
   const sun = sunFor(wx);
   const bandCls = fl ? fl.band.replace(' ', '-') : '';
   // River name, gauge id and the save star live in the selected-river bar above.
+  // "428 cfs" -> big number + small unit.
+  const big = (text) => { const m = /^([^\s°]+)(.*)$/.exec(text); return m ? `${m[1]}<span class="small">${m[2]}</span>` : text; };
   let h = `<div class="card"><h2>River conditions</h2>`;
   if (S.loadError) h += `<p class="danger">${esc(S.loadError)}</p>`;
+  // Water temp first: it drives the advice most. Without a sensor, show the estimate and where it came from.
+  const est = S.tempEst[s.id];
+  const tempTile = s.waterTempF != null
+    ? `<div class="v">${big(fmt('temp', s.waterTempF, 'metric'))}</div><div class="s">from gauge</div>`
+    : est && Date.now() - est.at < 12 * 3600e3
+      ? `<div class="v est">≈${big(fmt('temp', est.tempF, 'metric'))}</div><div class="s">est. from ${esc(est.from)} gauge, ${Math.round(est.dist)} mi</div>`
+      : `<div class="v est">≈${big(fmt('temp', tempNow().T))}</div><div class="s">no sensor here: estimated from air temps</div>`;
   h += `<div class="stats">
-    <div class="stat"><div class="k">Flow</div><div class="v">${s.cfs != null ? Math.round(s.cfs).toLocaleString() : '—'}<span class="small"> cfs</span></div>
-      <div class="s">${fl ? `<span class="band ${bandCls}">${fl.band}</span> ${fl.pct}% of normal` : 'no history'}<br>${trendArrow(s.trend)}</div></div>
-    <div class="stat"><div class="k">Water temp</div><div class="v">${s.waterTempF != null ? `${s.waterTempF}°F` : '—'}</div>
-      <div class="s">${s.waterTempF != null ? 'from gauge' : 'no sensor here. Enter yours below or I\'ll estimate'}</div></div>`;
+    <div class="stat"><div class="k">Water temp ${info(s.waterTempF != null ? 'watertemp' : 'estimated')}</div>${tempTile}</div>
+    <div class="stat"><div class="k">Flow ${info('flow')}</div><div class="v">${s.cfs != null ? big(fmt('flow', s.cfs, 'us')) : '—'}</div>
+      <div class="s">${fl ? `<span class="band ${bandCls}">${fl.band}</span> ${fl.pct}% of normal` : 'no history'}<br>${trendArrow(s.trend)}</div></div>`;
   if (wx) {
-    h += `<div class="stat"><div class="k">Weather</div><div class="v">${wx.airF}°F</div><div class="s">${esc(codeText(wx.code))} · ${wx.cloud}% cloud</div></div>
-      <div class="stat"><div class="k">Wind · Pressure</div><div class="v">${wx.windMph}<span class="small"> mph</span></div><div class="s">gusts ${wx.gustMph} · barometer ${wx.pressureTrend}</div></div>
-      <div class="stat"><div class="k">Sun</div><div class="s" style="font-size:16px;color:var(--ink)">↑ ${fmtTime(sun.sunrise)}<br>↓ ${fmtTime(sun.sunset)}</div></div>
-      <div class="stat"><div class="k">Moon</div><div class="s" style="font-size:16px;color:var(--ink)">${moonPhase()}</div></div>`;
+    h += `<div class="stat"><div class="k">Weather ${info('light')}</div><div class="v">${big(fmt('temp', wx.airF, wx.cap))}</div><div class="s">${esc(codeText(wx.code))} · ${wx.cloud}% cloud</div></div>
+      <div class="stat"><div class="k">Wind · Pressure ${info('barometer')}</div><div class="v">${big(fmt('wind', wx.windMph, wx.cap))}</div><div class="s">gusts ${fmt('wind', wx.gustMph, wx.cap)} · barometer ${wx.pressureTrend}</div></div>`;
   }
   h += `</div>`;
-  const foot = [fl ? `Normal today ${Math.round(fl.p25)}–${Math.round(fl.p75)} cfs` : '', wx ? `weather ${ago(wx.fetchedAt)}` : ''].filter(Boolean).join(' · ');
+  if (wx) h += `<p class="sunmoon">☀︎ ${fmtTime(sun.sunrise)} – ${fmtTime(sun.sunset)} · ${moonPhase()} ${info('moon', 'Does the moon matter?')}</p>`;
+  const foot = [fl ? `Normal today ${fmt('flow', fl.p25, 'us').replace(/ .*$/, '')}–${fmt('flow', fl.p75, 'us')}` : '', wx ? `weather ${ago(wx.fetchedAt)}` : ''].filter(Boolean).join(' · ');
   if (foot) h += `<p class="small muted" style="margin:8px 0 0">${foot}</p>`;
   return h + `</div>`;
 }
@@ -856,20 +1077,47 @@ function viewSetups() {
   const rt = rateConditions(cond, S.kb);
   let h = `<div class="card summary"><div class="site-head"><b>${esc(S.manual ? 'Manual conditions' : S.site.name)}</b>
     <span class="chip-score lvl-${rt.level}" title="Conditions score">${rt.score}</span></div>
-    <div class="small">${SPECIES_LABEL[c.species] || 'Trout'} · water ${c.waterTempF}°F (${tempSrc}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${CLARITY_LABEL[c.clarity].toLowerCase()} · ${WATER_LABEL[c.waterType].toLowerCase()} ${c.depthFt} ft · ${c.tod}</div>
+    <div class="small">${SPECIES_LABEL[c.species] || 'Trout'} · water ${c.tempEstimated ? '≈' : ''}${fmt('temp', c.waterTempF)} (${esc(tempSrc)}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${CLARITY_LABEL[c.clarity].toLowerCase()} · ${WATER_LABEL[c.waterType].toLowerCase()} ${fmt('len', c.depthFt)} · ${c.tod}</div>
     ${viewRunAlert()}
     <p style="margin:8px 0 0"><button class="linkish" data-act="toask">💬 Ask Claude about these conditions</button></p></div>`;
   h += viewNudge();
-  for (const w of r.warnings) h += `<div class="alert ${w.level}">${w.level === 'stop' ? '🛑 ' : '⚠️ '}${esc(w.text)}</div>`;
+  for (const w of r.warnings) h += `<div class="alert ${w.level}">${w.level === 'stop' ? '🛑 ' : '⚠️ '}${esc(localize(w.text))}</div>`;
   h += readingTheRiver(r.notes, c.river);
   h += viewClaudeAnswers();
 
+  h += setupMenu(c);
+  const tech = TECH_GROUPS[S.setupFilter];
+  if (tech) {
+    const pick = r.setups.find((s) => tech.includes(s.key));
+    if (!pick) h += `<div class="card"><p style="margin:0">No ${esc(TECH_LABEL[S.setupFilter].toLowerCase())} setup suits ${SPECIES_LABEL[c.species] || 'trout'} here right now. Try another technique or <button class="linkish" data-act="technique" data-v="all">show the best for now</button>.</p></div>`;
+    else {
+      const isTop = pick === r.setups[0];
+      const rankHtml = `<div class="rank">${isTop ? 'Best bet today' : `Not the top pick today (score ${Math.round(pick.score)}): here's the best way to fish it`}</div>`;
+      h += setupCard(pick, 0, false, rankHtml, isTop ? 'best' : '');
+    }
+    h += viewAskClaude();
+    return h;
+  }
   const top = r.setups.slice(0, 3), rest = r.setups.slice(3);
   top.forEach((s, k) => { h += k === 0 ? setupCard(s, 0, false, null, 'best') : compactSetup(s, k); });
   h += fromBoxCard(r.fromBox);
   if (rest.length) h += `<details class="more card"><summary>More options (${rest.length})</summary>${rest.map((s, k) => setupCard(s, k + 3, true)).join('')}</details>`;
   h += viewAskClaude();
   return h;
+}
+
+// "Show me setups for…": target fish, then an optional technique filter.
+const TECH_GROUPS = { dry: ['dry', 'drydropper', 'skate'], nymph: ['nymph', 'shnymph'], euro: ['euro'], streamer: ['streamer', 'salstreamer'],
+  swing: ['swing', 'softhackle', 'skate'], egg: ['salegg', 'shnymph', 'nymph'] };
+const TECH_LABEL = { all: 'Best for now', dry: 'Dry', nymph: 'Nymph', euro: 'Euro', streamer: 'Streamer', swing: 'Swing', egg: 'Egg' };
+function setupMenu(c) {
+  const cur = c.species === 'salmon' ? (S.inputs.salmonKind || 'salmon') : (c.species || 'trout');
+  const targets = [['trout', 'Trout'], ['steelhead', 'Steelhead'], ['king', 'King salmon'], ['coho', 'Coho']];
+  const tChip = ([v, l]) => `<button class="chip ${cur === v ? 'on' : ''}" data-act="target" data-v="${v}">${l}</button>`;
+  const techs = Object.keys(TECH_LABEL).filter((k) => k === 'all' || (c.species === 'trout' ? k !== 'egg' : !['dry', 'euro'].includes(k) || (k === 'dry' && c.species === 'steelhead')));
+  return `<div class="card setmenu"><h3 style="margin-top:0">Show me setups for…</h3>
+    <div class="scroller">${targets.map(tChip).join('')}${cur === 'salmon' ? '<button class="chip on" data-act="target" data-v="salmon">Salmon (any)</button>' : ''}</div>
+    <div class="scroller">${techs.map((k) => `<button class="chip small-chip ${S.setupFilter === k ? 'on' : ''}" data-act="technique" data-v="${k}">${TECH_LABEL[k]}</button>`).join('')}</div></div>`;
 }
 
 // ---------- Ask Claude (hand-off to the user's own Claude app; no API, no cost) ----------
@@ -1048,8 +1296,8 @@ function readingTheRiver(notes, river) {
   list.sort((a, b) => rank(a) - rank(b));
   if (!list.length) return '';
   const top = list.slice(0, 3), rest = list.slice(3);
-  return `<div class="card"><h2>Reading the river</h2><ul class="notes">${top.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
-    ${rest.length ? `<details class="more" ${keep('morenotes')}><summary>More notes (${rest.length})</summary><ul class="notes">${rest.map((n) => `<li>${esc(n)}</li>`).join('')}</ul></details>` : ''}</div>`;
+  return `<div class="card"><h2>Reading the river</h2><ul class="notes">${top.map((n) => `<li>${esc(localize(n))}</li>`).join('')}</ul>
+    ${rest.length ? `<details class="more" ${keep('morenotes')}><summary>More notes (${rest.length})</summary><ul class="notes">${rest.map((n) => `<li>${esc(localize(n))}</li>`).join('')}</ul></details>` : ''}</div>`;
 }
 
 // 2nd and 3rd choices: title, first reason and key specs; tap to see the full rig.
@@ -1057,7 +1305,7 @@ function compactSetup(s, k) {
   const rank = ['Best bet', '2nd choice', '3rd choice'][k] || 'Option';
   return `<details class="card setup compact" ${keep(`setup-${s.key}`)}>
     <summary><div class="rank">${rank}</div><h2>${esc(s.title)}</h2>
-      <p class="spec">${esc(keySpec(s))}</p><p class="small" style="margin:2px 0 0">${esc(s.why[0] || '')}</p>
+      <p class="spec">${esc(localize(keySpec(s)))}</p><p class="small" style="margin:2px 0 0">${esc(localize(s.why[0] || ''))}</p>
       <span class="more-link">Show rig, flies and tips</span></summary>
     ${setupCard(s, k, true, '', '', true)}
   </details>`;
@@ -1066,8 +1314,8 @@ function compactSetup(s, k) {
 // One-time hint for new users: add gear so setups can mark what you own.
 function viewNudge() {
   if (S.nudgeDismissed || S.gear.rods.length || S.gear.flies.length) return '';
-  return `<div class="card nudge"><b>Tip:</b> add your rods and flies on the <b>Gear</b> tab. Setups will then use your rods, mark flies you own with ✓ and build a setup from your own box.
-    <div class="btn-row" style="margin-top:8px"><button data-tab="gear">🧰 Go to Gear</button><button class="linkish" data-act="dismissnudge">Not now</button></div></div>`;
+  return `<div class="card nudge"><b>Tip:</b> add your rods and flies on the <b>More</b> tab. Setups will then use your rods, mark flies you own with ✓ and build a setup from your own box.
+    <div class="btn-row" style="margin-top:8px"><button data-tab="gear">🧰 Go to More</button><button class="linkish" data-act="dismissnudge">Not now</button></div></div>`;
 }
 
 function fromBoxCard(fb) {
@@ -1076,24 +1324,29 @@ function fromBoxCard(fb) {
   if (fb.status === 'ok') return setupCard(fb.setup, -1, false, head, 'boxsetup');
   const msg = {
     topOwned: '<b>Good news:</b> the Best bet above uses flies you already carry.',
-    empty: 'Tick the flies you carry on the <b>Gear</b> tab and I\'ll build a setup from your own box.',
+    empty: 'Tick the flies you carry on the <b>More</b> tab and I\'ll build a setup from your own box.',
     nomatch: 'None of the flies in your box suit today\'s setups. Worth picking up some of the flies listed above.',
   }[fb.status];
   return `<div class="card boxsetup">${head}<p style="margin:6px 0 0">${msg}</p>
     ${fb.status === 'empty' ? '<p style="margin:10px 0 0"><button style="width:100%" data-tab="gear">🧰 Go to my fly box</button></p>' : ''}</div>`;
 }
 
+// Learn entry for each technique, shown as ⓘ next to the setup title.
+const TECH_INFO = { dry: 'dry', drydropper: 'drydropper', nymph: 'indicatorrig', euro: 'euro', streamer: 'streamer', softhackle: 'softhackle',
+  swing: 'swing', skate: 'skater', shnymph: 'egg', salegg: 'egg', salstreamer: 'streamer' };
+
 function setupCard(s, k, inner, rankHtml, extraClass = '', noHead = false) {
   const rank = ['Best bet', '2nd choice', '3rd choice'][k] || 'Option';
-  const head = noHead ? '' : `${rankHtml || `<div class="rank">${rank}</div>`}<h2>${esc(s.title)}</h2>`;
+  const used = new Set(); // each glossary term is linked once per card
+  const head = noHead ? '' : `${rankHtml || `<div class="rank">${rank}</div>`}<h2>${esc(s.title)} ${TECH_INFO[s.key] ? info(TECH_INFO[s.key]) : ''}</h2>`;
   return `<div class="${inner ? '' : 'card '}setup ${extraClass}">${head}
-    <ul class="why">${s.why.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>
-    <dl class="kv"><dt>Rod</dt><dd>${esc(s.rod.text)}${s.rod.note ? `<br><span class="small muted">${esc(s.rod.note)}</span>` : ''}</dd>
-    <dt>Line</dt><dd>${esc(s.line)}</dd></dl>
-    <h3>Rig, top to bottom</h3>${rigDiagram(s.rig)}
+    <ul class="why">${s.why.map((w) => `<li>${esc(localize(w))}</li>`).join('')}</ul>
+    <dl class="kv"><dt>Rod</dt><dd>${linkTerms(esc(s.rod.text), used)}${s.rod.note ? `<br><span class="small muted">${esc(s.rod.note)}</span>` : ''}</dd>
+    <dt>Line</dt><dd>${linkTerms(esc(localize(s.line)), used)}</dd></dl>
+    <h3>Rig, top to bottom</h3>${rigDiagram(s.rig, used)}
     <h3>Flies</h3><ul class="fly-list">${s.flies.map((f) => `<li><span>${f.owned ? '<span class="own">✓ </span>' : ''}${esc(f.name)}</span><span class="role">${esc(f.role)}</span></li>`).join('')}</ul>
     ${s.flies.some((f) => f.owned) ? '<p class="small muted" style="margin:0 0 6px">✓ = in your fly box</p>' : ''}
-    <details class="more tips" ${keep(`tips-${s.key}-${extraClass}`)}><summary>Tips (${s.tips.length})</summary><ul class="notes">${s.tips.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></details>
+    <details class="more tips" ${keep(`tips-${s.key}-${extraClass}`)}><summary>Tips (${s.tips.length})</summary><ul class="notes">${s.tips.map((t) => `<li>${esc(localize(t))}</li>`).join('')}</ul></details>
     <p style="margin:12px 0 0"><button style="width:100%" data-act="quicklog" data-key="${s.key}"${extraClass === 'boxsetup' ? ' data-box="1"' : ''}>🐟 Caught one on this</button></p>
   </div>`;
 }
@@ -1105,9 +1358,9 @@ const GLYPH = {
   sighter: '',
 };
 
-function rigDiagram(parts) {
+function rigDiagram(parts, used = new Set()) {
   return `<div class="rig">${parts.map((p) => `<div class="rig-row k-${p.kind}"><div class="rig-ico">${GLYPH[p.kind] || ''}</div>
-    <div class="rig-txt"><b>${esc(p.label)}</b>${p.detail ? `<span>${esc(p.detail)}</span>` : ''}</div></div>`).join('')}</div>`;
+    <div class="rig-txt"><b>${linkTerms(esc(localize(p.label)), used)}</b>${p.detail ? `<span>${linkTerms(esc(localize(p.detail)), used)}</span>` : ''}</div></div>`).join('')}</div>`;
 }
 
 // ---------- Log ----------
@@ -1124,7 +1377,7 @@ function viewLog() {
       <label class="field">Technique</label><select data-log="technique">${TECH.map(([k, l]) => `<option value="${k}" ${d.technique === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <label class="field">Fly</label><input type="text" list="flyopts" data-log="fly" value="${esc(d.fly)}" placeholder="e.g. Pheasant Tail #16">
       <datalist id="flyopts">${(d.flyOptions || []).map((f) => `<option value="${esc(f)}">`).join('')}</datalist>
-      <label class="field">Length (inches, optional)</label><input type="number" inputmode="decimal" data-log="length" value="${esc(d.length)}">
+      <label class="field">Length (${unitOf('fish')}, optional)</label><input type="number" inputmode="decimal" data-log="length" value="${esc(d.length)}">
       <label class="field">Notes</label><input type="text" data-log="notes" value="${esc(d.notes)}" placeholder="where, what happened">
       <label class="field">Photo (optional)</label><input type="file" accept="image/*" capture="environment" data-act="photo">
       ${d.photo ? `<img src="${d.photo}" alt="" style="width:100%;border-radius:12px;margin-top:8px">` : ''}
@@ -1134,11 +1387,12 @@ function viewLog() {
     h += `<div class="card"><button class="btn-primary" data-act="newlog">+ Log a catch</button>
       <p class="small muted" style="margin:8px 0 0">Your catches teach the app. Setups that worked for you in similar conditions get ranked higher next time.</p></div>`;
   }
+  h += catchInsights();
   if (S.catches.length) {
     h += `<div class="card"><h2>${S.catches.length} catch${S.catches.length === 1 ? '' : 'es'}</h2>`;
     for (const [k, c] of [...S.catches.entries()].reverse()) {
       h += `<div class="log-item" style="border-top:1px solid var(--line);padding:10px 0">${c.photo ? `<img src="${c.photo}" alt="">` : ''}
-        <div style="flex:1"><div class="t">${esc(c.fly || 'Unknown fly')}${c.length ? ` · ${esc(c.length)}"` : ''}</div>
+        <div style="flex:1"><div class="t">${esc(c.fly || 'Unknown fly')}${c.length && !isNaN(c.length) ? ` · ${fmt('fish', +c.length)}` : c.length ? ` · ${esc(c.length)}"` : ''}</div>
         <div class="small">${esc(techName(c.technique))} · ${SPECIES_LABEL[c.species] || 'Trout'} · ${new Date(c.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div>
         <div class="small muted">${esc(condSummary(c.cond))}${c.notes ? `<br>${esc(c.notes)}` : ''}</div>
         <button class="linkish small danger" data-act="dellog" data-k="${k}">Delete</button></div></div>`;
@@ -1150,9 +1404,40 @@ function viewLog() {
   return h;
 }
 
+// Patterns in the log (5+ catches): what has worked, where and when. Up to 3 lines, each with its count.
+function catchInsights() {
+  const cs = S.catches;
+  if (cs.length < 5) return '';
+  const tally = (list, keyFn) => {
+    const m = new Map();
+    for (const c of list) { const k = keyFn(c); if (k) m.set(k, (m.get(k) || 0) + 1); }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]);
+  };
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const out = [];
+  const [tech] = tally(cs, (c) => c.technique);
+  if (tech && tech[1] >= 2) out.push(`<b>${esc(techName(tech[0]))}</b> has caught ${tech[1]} of your ${cs.length} fish.`);
+  // Best river with 3+ fish, and what worked there.
+  const [river] = tally(cs, (c) => c.cond && c.cond.site);
+  if (river && river[1] >= 3) {
+    const here = cs.filter((c) => c.cond && c.cond.site === river[0]);
+    const [rt] = tally(here, (c) => c.technique);
+    const [rm] = tally(here, (c) => MONTHS[new Date(c.date).getMonth()]);
+    out.push(`On <b>${esc(river[0])}</b>, ${esc(techName(rt[0]).toLowerCase())} caught ${rt[1]} of ${here.length}${rm && rm[1] >= 2 ? `, mostly in ${rm[0]}` : ''}.`);
+  }
+  const [fly] = tally(cs, (c) => (c.fly || '').replace(/\s*#.*$/, '').trim());
+  if (fly && fly[1] >= 2) out.push(`Top fly: <b>${esc(fly[0])}</b> (${fly[1]} fish).`);
+  else {
+    const [mon] = tally(cs, (c) => MONTHS[new Date(c.date).getMonth()]);
+    if (mon && mon[1] >= 2) out.push(`Your best month so far: <b>${mon[0]}</b> (${mon[1]} fish).`);
+  }
+  if (!out.length) return '';
+  return `<div class="card insights"><h2>What's working for you</h2><ul class="notes">${out.slice(0, 3).map((t) => `<li>${t}</li>`).join('')}</ul></div>`;
+}
+
 function condSummary(c) {
   if (!c) return '';
-  return [c.site, c.waterTempF != null ? `${c.waterTempF}°F water` : '', c.cfs != null ? `${Math.round(c.cfs)} cfs` : '', c.flowBand, c.clarity].filter(Boolean).join(' · ');
+  return [c.site, c.waterTempF != null ? `${fmt('temp', c.waterTempF)} water` : '', c.cfs != null ? fmt('flow', c.cfs) : '', c.flowBand, c.clarity].filter(Boolean).join(' · ');
 }
 
 function startLog(key, fromBox) {
@@ -1243,7 +1528,12 @@ const catalogSet = () => new Set(flyCatalog().flatMap((g) => g[1]).map((n) => n.
 
 function viewGear() {
   const g = S.gear;
-  return `<div class="card"><h2>My rods</h2>
+  const um = unitMode();
+  return `<div class="card"><h2>Units</h2>
+    <div class="seg" role="radiogroup" aria-label="Units">${UNIT_MODES.map(([k, l]) => `<button role="radio" aria-checked="${um === k}" class="${um === k ? 'on' : ''}" data-act="setunits" data-v="${k}">${l}</button>`).join('')}</div>
+    <p class="small muted" style="margin:6px 0 0">${um === 'metric' ? '°C, m³/s, metres, km/h, cm.' : um === 'captured' ? 'Each number as its source measured it: USGS water temp in °C, flow in cfs, weather in °C and km/h. Advice text stays in US units.' : '°F, cfs, feet, mph, inches.'}</p></div>
+  ${viewLearn()}
+  <div class="card"><h2>My rods</h2>
     <p class="small muted" style="margin-top:0">Setups will use the rod you own that fits best.</p>
     ${g.rods.length ? g.rods.map((r, k) => `<div class="rod-row"><span><b>${r.len} ft ${r.wt}wt</b> ${r.type !== 'single' ? r.type : 'single-hand'}</span><button class="linkish danger" data-act="delrod" data-k="${k}">Remove</button></div>`).join('') : '<p class="muted">No rods yet.</p>'}
     <h3>Add a rod</h3>
@@ -1314,6 +1604,7 @@ $app.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-act]');
   if (!b || b.type === 'file') return;
   const act = b.dataset.act;
+  if (act === 'learn' && b.closest('summary')) e.preventDefault(); // ⓘ inside a <summary> shouldn't fold the section
   if (act === 'near') findNearMe();
   else if (act === 'manual') {
     S.picking = false; S.manual = true; S.site = null; S.wx = null; S.flow = null; saveSession();
@@ -1359,6 +1650,27 @@ $app.addEventListener('click', async (e) => {
     const y = window.scrollY; render(); window.scrollTo(0, y);
   }
   else if (act === 'dismissnudge') { S.nudgeDismissed = true; store.set('nudgeDismissed', true); render(); }
+  else if (act === 'spotov') {
+    const id = S.site.id;
+    S.spotOverride[id] = { ...(S.spotOverride[id] || {}), [b.dataset.f]: b.dataset.v };
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+  else if (act === 'usegauge') { delete S.spotOverride[S.site.id]; const y = window.scrollY; render(); window.scrollTo(0, y); }
+  else if (act === 'learn') openLearn(b.dataset.id);
+  else if (act === 'setunits') {
+    S.gear.units = b.dataset.v; setUnitMode(b.dataset.v);
+    await store.set('gear', S.gear);
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+  else if (act === 'target') {
+    const v = b.dataset.v;
+    if (v === 'king' || v === 'coho') { S.inputs.species = 'salmon'; S.inputs.salmonKind = v; }
+    else { S.inputs.species = v; S.inputs.salmonKind = null; }
+    S.setupFilter = 'all';
+    saveSession();
+    const y = window.scrollY; render(); window.scrollTo(0, y);
+  }
+  else if (act === 'technique') { S.setupFilter = b.dataset.v; const y = window.scrollY; render(); window.scrollTo(0, y); }
   else if (act === 'buildprofile') {
     const prompt = buildProfilePrompt(S.site);
     copyText(prompt);
@@ -1424,7 +1736,7 @@ $app.addEventListener('click', async (e) => {
   else if (act === 'cancellog') { S.logDraft = null; render(); }
   else if (act === 'savelog') {
     const d = S.logDraft;
-    const entry = { species: d.species, technique: d.technique, fly: d.fly.trim(), length: d.length, notes: d.notes, photo: d.photo, cond: d.cond };
+    const entry = { species: d.species, technique: d.technique, fly: d.fly.trim(), length: d.length === '' ? '' : fromInput('fish', d.length), notes: d.notes, photo: d.photo, cond: d.cond };
     // Editing a quick-logged catch keeps its original time.
     if (d.editIndex != null && S.catches[d.editIndex]) S.catches[d.editIndex] = { ...S.catches[d.editIndex], ...entry };
     else S.catches.push({ date: Date.now(), ...entry });
@@ -1487,12 +1799,23 @@ $app.addEventListener('submit', (e) => {
 
 $app.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.dataset.in) {
+  if (el.dataset.in === 'tempOverride') {
+    // Typed in the units on screen; stored in °F, remembering which unit you used ("as captured").
+    S.inputs.tempOverride = el.value === '' ? '' : String(fromInput('temp', el.value));
+    S.inputs.tempUnit = unitMode() === 'metric' ? 'metric' : 'us';
+    saveSession();
+  } else if (el.dataset.in) {
     S.inputs[el.dataset.in] = el.value;
-    if (el.dataset.in === 'depthFt') { const dv = document.getElementById('dv'); if (dv) dv.textContent = el.value; }
+    if (el.dataset.in === 'depthFt') { const dv = document.getElementById('dv'); if (dv) dv.textContent = fmt('len', +el.value); }
     saveSession();
   } else if (el.dataset.log) {
     S.logDraft[el.dataset.log] = el.value;
+  } else if (el.id === 'learnq') {
+    S.learnQ = el.value;
+    const pos = el.selectionStart;
+    render();
+    const again = document.getElementById('learnq');
+    if (again) { again.focus(); again.setSelectionRange(pos, pos); }
   } else if (el.dataset.rivernotes !== undefined) {
     S.riverNotes[el.dataset.rivernotes] = el.value;
     store.set('rivernotes', S.riverNotes);
@@ -1566,6 +1889,8 @@ window.addEventListener('offline', render);
   S.riverNotes = await store.get('rivernotes', {});
   S.nudgeDismissed = await store.get('nudgeDismissed', false);
   S.observed = await store.get('observed', {});
+  S.tempEst = await store.get('tempEst', {});
+  setUnitMode(S.gear.units);
   S.reports = await store.get('reports');
   loadReports().then(() => { if (S.tab === 'water' && !isPicking()) render(); });
   S.prep = await store.get('prepMsg', '');

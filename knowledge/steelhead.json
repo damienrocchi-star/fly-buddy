@@ -1,9 +1,9 @@
 {
-  "_about": "Steelhead & salmon knowledge. Sink tips by water-temp band (F). Flies by clarity. Edit freely.",
+  "_about": "Steelhead & salmon knowledge. Sink tips by water-temp band (F): heavy T-11/T-14 below about 42F, lighter as water warms; around 48-50F and up fish will rise to a fly near the surface (MidCurrent, Flylords, John Nagy). Flies by clarity. Edit freely.",
   "tips": [
-    { "maxTemp": 40, "label": "Heavy sink tip", "tip": "T-11 to T-14, 10-15 ft", "grain": [10, 14], "why": "Cold water: fish hold deep and won't move far. Get the fly slow and low." },
+    { "maxTemp": 42, "label": "Heavy sink tip", "tip": "T-11 to T-14, 10-12 ft", "grain": [10, 14], "why": "Cold water: fish hold deep and won't move far. Get the fly slow and low." },
     { "maxTemp": 47, "label": "Medium sink tip", "tip": "T-8 to T-11, 10 ft", "grain": [8, 11], "why": "Cool water: fish will move a little. Keep the fly in the bottom third of the water." },
-    { "maxTemp": 54, "label": "Light sink tip", "tip": "T-4 to T-8, or a Type 3 MOW tip", "grain": [4, 8], "why": "Prime temps: fish are active and will come up for a fly in the middle of the water." },
+    { "maxTemp": 50, "label": "Light sink tip", "tip": "T-4 to T-8, or an intermediate tip", "grain": [4, 8], "why": "Prime temps: fish are active and will come up for a fly in the middle of the water." },
     { "maxTemp": 99, "label": "Floating line / dry line", "tip": "Floating tip or a clear intermediate polyleader", "grain": [0, 0], "why": "Warm water: fish are aggressive and will rise. Swing just under the surface or skate a dry." }
   ],
   "swing_flies": {
