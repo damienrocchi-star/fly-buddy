@@ -408,3 +408,6 @@ button, .btn { display: inline-flex; align-items: center; justify-content: cente
   .runcal-months span.in { background: var(--brand-soft); color: var(--brand); }
   .runcal-months span.peak { background: var(--brand); color: var(--brand-ink); }
 }
+.loc-steps { margin: 4px 0 10px; padding-left: 22px; }
+.loc-steps li { margin: 8px 0; }
+.warn-note { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 8px 12px; }

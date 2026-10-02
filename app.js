@@ -10,7 +10,7 @@ import { extractSignals, observationSignals, mergeSignals, OBS_MAX_AGE_MS } from
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 import { fmt, val, unitOf, fromInput, localize, setUnitMode, unitMode, UNIT_MODES } from './units.js';
 
-const APP_VERSION = '12'; // keep in step with CACHE in sw.js
+const APP_VERSION = '13'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -74,9 +74,60 @@ function gps() {
     if (!navigator.geolocation) return rej(new Error('No GPS on this device'));
     navigator.geolocation.getCurrentPosition(
       (p) => res({ lat: p.coords.latitude, lon: p.coords.longitude }),
-      (e) => rej(new Error(e.code === 1 ? 'Location permission was denied. Allow location for this site in your phone settings.' : 'Could not get your location.')),
+      (e) => {
+        const err = new Error(e.code === 1 ? 'Location is turned off for Fly Buddy.' : 'Could not get your location. Step into the open (away from tall trees or banks) and try again.');
+        err.code = e.code; // 1 = blocked, 2 = no position, 3 = timed out
+        rej(err);
+      },
       { enableHighAccuracy: false, timeout: 20000, maximumAge: 600000 });
   });
+}
+
+// Location blocked: show how to turn it on for this phone, with a Try again button.
+function showLocationHelp(retry) {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const steps = ios && /CriOS/.test(ua) ? [
+    'Open <b>Settings</b> → <b>Apps</b> → <b>Chrome</b> → <b>Location</b> → <b>While Using the App</b>.',
+    'Check <b>Settings</b> → <b>Privacy &amp; Security</b> → <b>Location Services</b> is <b>On</b>.',
+    'Come back here and tap <b>Try again</b>. Tap <b>Allow</b> if asked.',
+  ] : ios ? [
+    'Open <b>Settings</b> → <b>Privacy &amp; Security</b> → <b>Location Services</b> and turn it <b>On</b>.',
+    'On that screen, scroll to <b>Safari Websites</b> and choose <b>While Using the App</b>. (Fly Buddy on your home screen uses this too.)',
+    'Still blocked? Open Fly Buddy in <b>Safari</b>, tap <b>aA</b> in the address bar → <b>Website Settings</b> → <b>Location</b> → <b>Allow</b>.',
+    'Come back here and tap <b>Try again</b>. Tap <b>Allow</b> if asked.',
+  ] : /Android/.test(ua) ? [
+    'Swipe down from the top of the screen and turn <b>Location</b> <b>On</b>.',
+    'In Chrome, tap the icon left of the web address → <b>Permissions</b> → <b>Location</b> → <b>Allow</b>.',
+    'Using the Fly Buddy icon on your home screen? Long-press it → <b>App info</b> → <b>Permissions</b> → <b>Location</b> → <b>Allow only while using the app</b>.',
+    'Come back here and tap <b>Try again</b>.',
+  ] : [
+    'Turn on location (location services) in your device settings.',
+    'Allow location for this site in your browser: usually the icon left of the web address → <b>Location</b> → <b>Allow</b>.',
+    'Come back here and tap <b>Try again</b>.',
+  ];
+  document.querySelectorAll('.sheet-wrap').forEach((x) => x.remove());
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-wrap';
+  wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-t">
+    <div class="sheet-grip" aria-hidden="true"></div>
+    <div class="sheet-head"><h2 id="sheet-t">Turn on location for Fly Buddy</h2><button class="sheet-x" aria-label="Close">✕</button></div>
+    <p class="small muted" style="margin-top:0">Your phone is blocking location for this site. Fly Buddy only uses it to find gauges near you and place you on the river, and it stays on your phone.</p>
+    <ol class="loc-steps">${steps.map((s) => `<li>${s}</li>`).join('')}</ol>
+    <p class="small warn-note">Don't use "Clear History and Website Data" to reset it: that also deletes your saved catches, gear and rivers.</p>
+    <button class="btn-primary" data-retry>Try again</button>
+  </div>`;
+  const close = () => wrap.remove();
+  wrap.addEventListener('click', (ev) => {
+    if (ev.target === wrap || ev.target.closest('.sheet-x')) close();
+    if (ev.target.closest('[data-retry]')) { close(); retry(); }
+  });
+  document.body.appendChild(wrap);
+}
+
+// Toast for location problems, or the help sheet when it's blocked.
+function locationError(e, retry) {
+  if (e && e.code === 1) showLocationHelp(retry); else toast(e.message);
 }
 
 // ---------- data loading ----------
@@ -183,7 +234,7 @@ async function findNearMe() {
   try {
     S.gps = await gps();
   } catch (e) {
-    S.loading = ''; render(); toast(e.message); return;
+    S.loading = ''; render(); locationError(e, findNearMe); return;
   }
   S.loading = 'Looking for river gauges nearby…'; render();
   try {
@@ -369,7 +420,7 @@ async function whereAmI(fresh) {
   if (!site || site.lat == null) return;
   try {
     if (fresh || !S.gps) S.gps = await gps();
-  } catch (e) { toast(e.message); return; }
+  } catch (e) { if (fresh) locationError(e, () => whereAmI(true)); return; }
   const prev = S.spotLoc[site.id];
   if (!fresh && prev && distanceMi(prev.lat, prev.lon, S.gps.lat, S.gps.lon) < 0.5) return;
   if (distanceMi(S.gps.lat, S.gps.lon, site.lat, site.lon) > 40) { if (fresh) toast('You\'re more than 40 mi from this gauge.'); return; }
