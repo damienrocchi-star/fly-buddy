@@ -10,7 +10,7 @@ import { extractSignals, observationSignals, mergeSignals, OBS_MAX_AGE_MS } from
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 import { fmt, val, unitOf, fromInput, localize, setUnitMode, unitMode, UNIT_MODES } from './units.js';
 
-const APP_VERSION = '13'; // keep in step with CACHE in sw.js
+const APP_VERSION = '14'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -945,6 +945,14 @@ function viewSpot() {
   </details>`;
 }
 
+// One line on what your location changed in the score and setups.
+function locEffect(loc, cl) {
+  if (cl && cl.at) return 'Score and setups use Claude\'s read of your spot (see below).';
+  if (loc.relation === 'other-stream' && !loc.useGauge) return 'Different stream: the gauge\'s flow isn\'t used for your score until you tap the flow you see.';
+  if (loc.relation === 'at') return 'Gauge readings apply as they are.';
+  return 'Same river: gauge readings still apply (flow vs normal carries along the river). Timing notes are in Reading the river.';
+}
+
 // Where you are relative to the gauge, plus the optional Claude refine.
 function viewWhereAmI(loc, cl) {
   const where = S.locBusy ? '<span class="spin"></span>Finding your spot on the river…'
@@ -952,6 +960,7 @@ function viewWhereAmI(loc, cl) {
   return `<div class="whereami">
     <div class="wa-top"><span class="wa-ico" aria-hidden="true">${ICON.pin}</span><span class="wa-text">${where}</span>
       <button class="linkish small" data-act="whereami">${loc ? 'Update' : 'Where am I?'}</button></div>
+    ${loc && !S.locBusy ? `<p class="small muted" style="margin:6px 0 0">${esc(locEffect(loc, cl))}</p>` : ''}
     ${cl.at ? `<p class="small" style="margin:6px 0 0">💬 Adjusted by Claude ${ago(cl.at)}${cl.confidence ? ` (${esc(cl.confidence)} confidence)` : ''}${cl.note ? `: ${esc(cl.note)}` : ''}</p>` : ''}
     <details class="more" ${S.spotPasteOpen ? 'open' : ''}><summary class="small">Refine my spot with Claude</summary>
       <p class="small muted" style="margin-top:0">Claude looks at tributaries, springs and dams between you and the gauge, then suggests flow, temp and clarity for your spot. Copy its whole answer and paste it here.</p>
@@ -1245,6 +1254,30 @@ async function loadReports() {
   S.reports = await store.get('reports');
 }
 
+// How "your spot" differs from the gauge right now, and where each change came from.
+function spotAdjust() {
+  const s = S.site;
+  if (!s || S.manual) return null;
+  const ov = S.spotOverride[s.id] || {}, cl = S.spotClaude[s.id] || {}, loc = S.spotLoc[s.id];
+  const offStream = loc && loc.relation === 'other-stream' && !loc.useGauge;
+  const band = ov.band ? [ov.band, 'your choice'] : cl.band ? [cl.band, 'Claude'] : offStream ? ['unknown', 'different stream'] : null;
+  const trend = ov.trend ? [ov.trend, 'your choice'] : cl.trend ? [cl.trend, 'Claude'] : null;
+  const temp = cl.tempAdjF && S.inputs.tempOverride === '' ? cl.tempAdjF : null;
+  const clarity = cl.clarity && S.inputs.clarity === cl.clarity ? cl.clarity : null;
+  return band || trend || temp || clarity ? { band, trend, temp, clarity } : null;
+}
+
+function spotStrip(a) {
+  const T = tempNow();
+  const parts = [
+    a.band ? `flow <b>${esc(a.band[0])}</b> (${esc(a.band[1])})` : '',
+    a.temp ? `water <b>≈${fmt('temp', T.T)}</b> (${a.temp > 0 ? '+' : '−'}${Math.abs(a.temp)}°F, Claude)` : '',
+    a.clarity ? `clarity <b>${esc(CLARITY_LABEL[a.clarity].toLowerCase())}</b> (Claude)` : '',
+    a.trend ? `trend <b>${esc(TREND_LABEL[a.trend[0]].toLowerCase())}</b> (${esc(a.trend[1])})` : '',
+  ].filter(Boolean);
+  return `<div class="spot-strip"><b>For your spot:</b> ${parts.join(' · ')}<br><span class="small muted">The score and setups use these instead of the gauge. Change them in Your spot, or tap "Use gauge values" there.</span></div>`;
+}
+
 function viewConditions() {
   const s = S.site, wx = S.wx, fl = S.flow;
   const sun = sunFor(wx);
@@ -1256,7 +1289,10 @@ function viewConditions() {
   if (S.loadError) h += `<p class="danger">${esc(S.loadError)}</p>`;
   // Water temp first: it drives the advice most. Without a sensor, show the estimate and where it came from.
   const est = S.tempEst[s.id];
-  const tempTile = s.waterTempF != null
+  const adj = spotAdjust();
+  const tempTile = adj && adj.temp
+    ? `<div class="v est">≈${big(fmt('temp', tempNow().T))}</div><div class="s">for your spot: ${s.waterTempF != null ? `gauge ${fmt('temp', s.waterTempF, 'metric')}` : est ? `nearby gauge ${fmt('temp', est.tempF, 'metric')}` : 'estimate'} ${adj.temp > 0 ? '+' : '−'}${Math.abs(adj.temp)}°F (Claude)</div>`
+    : s.waterTempF != null
     ? `<div class="v">${big(fmt('temp', s.waterTempF, 'metric'))}</div><div class="s">from gauge</div>`
     : est && Date.now() - est.at < 12 * 3600e3
       ? `<div class="v est">≈${big(fmt('temp', est.tempF, 'metric'))}</div><div class="s">est. from ${esc(est.from)} gauge, ${Math.round(est.dist)} mi</div>`
@@ -1264,12 +1300,13 @@ function viewConditions() {
   h += `<div class="stats">
     <div class="stat"><div class="k">Water temp ${info(s.waterTempF != null ? 'watertemp' : 'estimated')}</div>${tempTile}</div>
     <div class="stat"><div class="k">Flow ${info('flow')}</div><div class="v">${s.cfs != null ? big(fmt('flow', s.cfs, 'us')) : '—'}</div>
-      <div class="s">${fl ? `<span class="band ${bandCls}">${fl.band}</span> ${fl.pct}% of normal` : 'no history'}<br>${trendArrow(s.trend)}</div></div>`;
+      <div class="s">${fl ? `<span class="band ${bandCls}">${fl.band}</span> ${fl.pct}% of normal` : 'no history'}<br>${trendArrow(s.trend)}${adj && adj.band ? `<br><b class="spot-mark">your spot: ${esc(adj.band[0])}</b>` : ''}</div></div>`;
   if (wx) {
     h += `<div class="stat"><div class="k">Weather ${info('light')}</div><div class="v">${big(fmt('temp', wx.airF, wx.cap))}</div><div class="s">${esc(codeText(wx.code))} · ${wx.cloud}% cloud</div></div>
       <div class="stat"><div class="k">Wind · Pressure ${info('barometer')}</div><div class="v">${big(fmt('wind', wx.windMph, wx.cap))}</div><div class="s">gusts ${fmt('wind', wx.gustMph, wx.cap)} · barometer ${wx.pressureTrend}</div></div>`;
   }
   h += `</div>`;
+  if (adj) h += spotStrip(adj);
   if (wx) h += `<p class="sunmoon">☀︎ ${fmtTime(sun.sunrise)} – ${fmtTime(sun.sunset)} · ${moonPhase()} ${info('moon', 'Does the moon matter?')}</p>`;
   h += viewChart();
   const foot = [fl ? `Normal today ${fmt('flow', fl.p25, 'us').replace(/ .*$/, '')}–${fmt('flow', fl.p75, 'us')}` : '', wx ? `weather ${ago(wx.fetchedAt)}` : ''].filter(Boolean).join(' · ');
