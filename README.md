@@ -24,7 +24,12 @@ The first time you tap **Find gauges near me**, allow location access.
 2. **Your spot** starts filled in from the gauge (flow and trend). Change anything that looks wrong, and add a thermometer reading if you have one. If the gauge has no temperature sensor, the app borrows a nearby gauge's reading (marked ≈).
 3. **Setups tab:** shows the top 3 rigs with the reasons for each, a top-to-bottom rig diagram, flies and tips. Use **Show me setups for…** to pick a target (trout, steelhead, king salmon, coho) or one technique.
 4. **Log tab:** log what worked. Setups that caught fish in similar conditions get ranked higher next time. After 5 catches, "What's working for you" sums up your patterns.
-5. **More tab:** units (US, Metric or As captured), **📖 Learn** (plain-English explanations of lines, flies, knots and conditions), and your rods and fly box.
+5. **Gear tab:** your rods, fly box and fly box photos.
+6. **More tab:** units (US, Metric or As captured), **Learn** (plain-English explanations of lines, flies, knots and conditions), and your minimum score.
+
+**Where am I?** In Your spot, tap **Where am I?**. The app uses the free USGS river network to tell whether you're upstream or downstream of the gauge, or on a different stream, and adjusts for that. **Refine my spot with Claude** asks Claude about tributaries, springs and dams in between. Paste its answer back to adjust flow, temperature and clarity.
+
+**Share:** use the share button next to the ★ (river), on any setup, or on a catch in your log. A shared river link opens that river straight away in Fly Buddy.
 
 Tap any **ⓘ** or dotted word to see what it means.
 

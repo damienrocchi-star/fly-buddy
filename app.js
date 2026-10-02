@@ -1,6 +1,8 @@
 // Fly Buddy: screens, state and glue. No build step, no API keys.
 import * as store from './store.js';
-import { findNearby, searchByName, getSite, getFlowStats, flowBand, distanceMi } from './data/usgs.js';
+import { findNearby, searchByName, getSite, getFlowStats, getHistory, flowBand, distanceMi } from './data/usgs.js';
+import { locate } from './data/nldi.js';
+import { ICON } from './icons.js';
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
 import { recommend, regionFor, estimateWaterTempF, runInfo, monthRange, allHatches, prepare, scoreHatches } from './engine/recommend.js';
 import { rateConditions } from './engine/rating.js';
@@ -8,7 +10,7 @@ import { extractSignals, observationSignals, mergeSignals, OBS_MAX_AGE_MS } from
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 import { fmt, val, unitOf, fromInput, localize, setUnitMode, unitMode, UNIT_MODES } from './units.js';
 
-const APP_VERSION = '11'; // keep in step with CACHE in sw.js
+const APP_VERSION = '12'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -22,7 +24,7 @@ const S = {
   tab: 'water', picking: false, kb: null, favScores: {}, noaaFc: null,
   profiles: {}, riverNotes: {}, reports: null, profileOpen: false,
   openState: {}, hadSession: false, nudgeDismissed: false, observed: {},
-  spotOverride: {}, tempEst: {}, favForecast: {}, setupFilter: 'all', gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
+  spotOverride: {}, spotLoc: {}, spotClaude: {}, history: null, tempEst: {}, favForecast: {}, setupFilter: 'all', gear: { rods: [], flies: [] }, catches: [], favorites: [], boxPhotos: [],
   inputs: { ...DEFAULT_INPUTS }, manual: false,
   site: null, wx: null, stats: null, flow: null, offline: false, loading: '',
   nearby: null, gps: null, logDraft: null, prep: '',
@@ -113,7 +115,7 @@ async function selectSite(basic) {
   // Flow/trend you set in "Your spot" apply to that river only.
   S.spotOverride = S.spotOverride[basic.id] ? { [basic.id]: S.spotOverride[basic.id] } : {};
   S.site = { ...basic }; S.manual = false; S.loading = 'Getting river conditions…';
-  S.wx = null; S.stats = null; S.flow = null; S.offline = false; S.loadError = null;
+  S.wx = null; S.stats = null; S.flow = null; S.history = null; S.offline = false; S.loadError = null;
   render();
   const id = basic.id;
   try {
@@ -146,6 +148,9 @@ async function selectSite(basic) {
   saveSession();
   render();
   if (S.site.lat != null) loadNoaa(S.site);
+  if (S.site.lat != null) loadHistory(S.site);
+  // Already know where you are (e.g. from "Find gauges near me")? Place you on the river.
+  if (S.gps && S.site.lat != null) whereAmI(false);
   if (S.site.waterTempF == null && S.site.lat != null) {
     estimateNearbyTemp(S.site).then((ok) => { if (ok && S.tab !== 'gear') { const y = window.scrollY; render(); window.scrollTo(0, y); } });
   }
@@ -302,14 +307,25 @@ function condFor(site, wx, flow, useOverride) {
   }
   const sun = sunFor(wx);
   const lon = site ? site.lon : S.gps ? S.gps.lon : null;
-  // "Your spot" flow/trend: your choice if you've changed it, otherwise the gauge's.
+  // "Your spot" flow/trend, in order: your own choice, Claude's read of your spot, then the gauge.
   const ov = useOverride && site ? S.spotOverride[site.id] : null;
+  const cl = useOverride && site ? S.spotClaude[site.id] : null;
+  const loc = useOverride && site ? S.spotLoc[site.id] : null;
+  // Claude's temperature adjustment applies to the gauge or estimate, never to your thermometer.
+  if (cl && cl.tempAdjF && override == null) {
+    if (waterTempF == null) { waterTempF = estimateWaterTempF(wx && wx.past3AvgAirF, new Date().getMonth() + 1); tempEstimated = true; tempSource = 'estimated'; }
+    waterTempF = Math.round(waterTempF + cl.tempAdjF);
+    tempSource = `${tempSource}, ${cl.tempAdjF > 0 ? '+' : ''}${cl.tempAdjF}°F for your spot (Claude)`;
+  }
+  // On a different stream from the gauge, its flow band doesn't describe your water.
+  const gaugeBand = loc && loc.relation === 'other-stream' && !loc.useGauge ? null : flow && flow.band;
   return {
     species: i.species, clarity: i.clarity, waterType: i.waterType, depthFt: +i.depthFt,
     salmonKind: i.salmonKind || null,
     waterTempF, tempSource, tempNote, tempEstimated,
-    flowBand: site ? (ov && ov.band) || (flow && flow.band) : (i.flowBand === 'unknown' ? null : i.flowBand),
-    flowTrend: site ? (ov && ov.trend) || site.trend : i.trend,
+    flowBand: site ? (ov && ov.band) || (cl && cl.band) || gaugeBand : (i.flowBand === 'unknown' ? null : i.flowBand),
+    flowTrend: site ? (ov && ov.trend) || (cl && cl.trend) || site.trend : i.trend,
+    spotNotes: site && useOverride ? spotNotes(site, loc, cl) : [],
     weather: site ? wx || null : manualWeather(),
     sunrise: sun.sunrise, sunset: sun.sunset,
     region: regionFor(lon),
@@ -318,6 +334,116 @@ function condFor(site, wx, flow, useOverride) {
     reportSignals: site && useOverride ? extractSignals(reportsFor(riverProfile(site)), S.kb['report-signals']) : null,
     now: new Date(),
   };
+}
+
+// ---------- where you are relative to the gauge ----------
+
+const REL_TEXT = { at: 'at the gauge', upstream: 'upstream of the gauge', downstream: 'downstream of the gauge', 'other-stream': 'on a different stream from the gauge' };
+const locText = (loc) => (loc.relation === 'at' ? "You're at the gauge"
+  : loc.relation === 'other-stream' ? `You're on a different stream from the gauge, about ${Math.max(1, Math.round(loc.miles))} mi away`
+  : `You're about ${Math.max(1, Math.round(loc.miles))} mi ${REL_TEXT[loc.relation]}`);
+
+// Notes for Reading the river and the score: how the gauge relates to your water.
+function spotNotes(site, loc, cl) {
+  const n = [];
+  if (loc && loc.relation !== 'at') {
+    const mi = Math.max(1, Math.round(loc.miles));
+    if (loc.relation === 'other-stream') {
+      n.push(`📍 You're on a different stream from the gauge (${mi} mi away), so its flow may not match yours. Set flow in Your spot from what you see.`);
+    } else {
+      // A flood wave travels roughly 2-3 mph.
+      const hrs = Math.max(1, Math.round(loc.miles / 2.5));
+      const word = { rising: 'rise', falling: 'drop' }[site.trend];
+      if (word) n.push(loc.relation === 'downstream' ? `📍 The ${word} the gauge shows should reach you in about ${hrs} h.` : `📍 You're upstream of the gauge: the ${word} it shows likely passed you about ${hrs} h ago.`);
+      if (loc.miles >= 10) n.push(`📍 The gauge is about ${mi} mi ${loc.relation === 'upstream' ? 'downstream' : 'upstream'} of you, so conditions may differ.`);
+    }
+  }
+  if (cl && cl.note) n.push(`💬 Claude on your spot: ${cl.note}`);
+  return n;
+}
+
+// Look up your spot on the river network (free USGS service). Cached per river, reused
+// while you're within half a mile of the last lookup.
+async function whereAmI(fresh) {
+  const site = S.site;
+  if (!site || site.lat == null) return;
+  try {
+    if (fresh || !S.gps) S.gps = await gps();
+  } catch (e) { toast(e.message); return; }
+  const prev = S.spotLoc[site.id];
+  if (!fresh && prev && distanceMi(prev.lat, prev.lon, S.gps.lat, S.gps.lon) < 0.5) return;
+  if (distanceMi(S.gps.lat, S.gps.lon, site.lat, site.lon) > 40) { if (fresh) toast('You\'re more than 40 mi from this gauge.'); return; }
+  try {
+    S.locBusy = true; if (fresh) rerender();
+    const r = await locate(S.gps.lat, S.gps.lon, site);
+    S.spotLoc[site.id] = { ...r, lat: S.gps.lat, lon: S.gps.lon, at: Date.now() };
+    store.set('spotLoc', S.spotLoc);
+  } catch (e) {
+    if (fresh) toast(navigator.onLine ? 'Could not look up the river network right now.' : 'No signal: try again when you have coverage.');
+  } finally { S.locBusy = false; }
+  if (S.site && S.site.id === site.id) rerender();
+}
+
+// Re-render without jumping the page.
+function rerender() { const y = window.scrollY; render(); window.scrollTo(0, y); }
+
+// "Refine my spot with Claude": hand-off prompt and the block we parse back.
+function buildSpotPrompt() {
+  const site = S.site, c = currentConditions(), loc = S.spotLoc[site.id];
+  const L = [];
+  L.push("I'm fly fishing and my app reads conditions from a USGS gauge that isn't exactly where I'm standing. Please estimate how conditions at my spot differ from the gauge.");
+  L.push('');
+  L.push(`- Gauge: ${site.name} (USGS ${site.id}) at ${site.lat.toFixed(4)}, ${site.lon.toFixed(4)}`);
+  if (S.gps) L.push(`- My location: ${S.gps.lat.toFixed(4)}, ${S.gps.lon.toFixed(4)}${loc ? ` (${locText(loc).replace("You're", 'I am')}, by the USGS river network)` : ''}`);
+  if (site.cfs != null) L.push(`- Gauge flow: ${Math.round(site.cfs)} cfs${S.flow ? `, ${S.flow.band} (${S.flow.pct}% of normal for today)` : ''}${site.trend ? `, ${site.trend}` : ''}`);
+  L.push(`- Water temp: ${c.waterTempF != null ? `${c.waterTempF}°F (${c.tempSource || 'estimated'})` : 'not measured'}`);
+  if (S.wx) L.push(`- Weather: ${S.wx.airF}°F air, ${codeText(S.wx.code).toLowerCase()}`);
+  L.push(`- Date: ${new Date().toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}`);
+  L.push('');
+  L.push('Think about tributaries, springs, dams or tailwaters, lakes and land use between the gauge and me, and how far apart we are along the river. Keep the answer short.');
+  L.push('At the very end, add this block exactly, filled in (leave a line out if you are unsure):');
+  L.push('FLYBUDDY-SPOT-START');
+  L.push('flow: <very low | low | normal | high | very high, compared with normal for my spot>');
+  L.push('temp_adjust_f: <number from -6 to 6: my water temp minus the gauge reading>');
+  L.push('clarity: <clear | slight | stained | muddy>');
+  L.push('trend: <rising | steady | falling>');
+  L.push('confidence: <low | medium | high>');
+  L.push('note: <one short line about my spot>');
+  L.push('FLYBUDDY-SPOT-END');
+  return L.join('\n');
+}
+
+function parseSpot(text) {
+  const m = /FLYBUDDY-SPOT-START([\s\S]*?)FLYBUDDY-SPOT-END/i.exec(String(text).replace(/\r/g, ''));
+  if (!m) return null;
+  const out = {};
+  for (let line of m[1].split('\n')) {
+    line = line.replace(/^[\s*\-•`]+|[`*]+$/g, '').replace(/\*\*/g, '').trim();
+    const kv = /^(flow|temp_adjust_f|clarity|trend|confidence|note)\s*:\s*(.+)$/i.exec(line);
+    if (!kv) continue;
+    const k = kv[1].toLowerCase(), v = kv[2].trim(), lv = v.toLowerCase().replace(/[<>]/g, '');
+    if (k === 'flow' && FLOW_LABEL[lv]) out.band = lv;
+    if (k === 'trend') { const t = lv === 'dropping' ? 'falling' : lv; if (TREND_LABEL[t]) out.trend = t; }
+    if (k === 'clarity' && CLARITY_LABEL[lv]) out.clarity = lv;
+    if (k === 'confidence' && ['low', 'medium', 'high'].includes(lv)) out.confidence = lv;
+    if (k === 'temp_adjust_f') { const n = parseFloat(v); if (!isNaN(n)) out.tempAdjF = Math.max(-6, Math.min(6, Math.round(n))); }
+    if (k === 'note' && !/^<.*>$/.test(v)) out.note = v.slice(0, 200);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+async function saveSpotText(text) {
+  const r = parseSpot(text);
+  if (!r) { toast("Couldn't find the FLYBUDDY-SPOT block. Copy Claude's whole answer and paste it again."); return; }
+  const id = S.site.id;
+  S.spotClaude[id] = { ...r, at: Date.now() };
+  if (r.clarity) { S.inputs.clarity = r.clarity; saveSession(); }
+  // Claude's read replaces your earlier chip choices for flow and trend.
+  delete S.spotOverride[id];
+  await store.set('spotClaude', S.spotClaude);
+  S.spotPasteOpen = false;
+  rerender();
+  toast('Your spot is updated from Claude\'s answer.');
 }
 
 // ---------- conditions score ----------
@@ -431,7 +557,7 @@ function render() {
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === S.tab));
   const net = document.getElementById('net');
   net.textContent = navigator.onLine ? '' : '● Offline';
-  const html = { water: viewWater, setups: viewSetups, log: viewLog, gear: viewGear }[S.tab]();
+  const html = { water: viewWater, setups: viewSetups, log: viewLog, gear: viewGear, more: viewMore }[S.tab]();
   $app.innerHTML = html;
 }
 
@@ -467,7 +593,7 @@ function viewWhereToGo() {
     const ri = runInfo(p, sp, month);
     return ri.status === 'peak' ? ` · ${ri.run.label} peak` : ri.status === 'in' ? ` · ${ri.run.label} in` : '';
   };
-  return `<div class="card where"><h2>🧭 Where should I go?</h2>
+  return `<div class="card where"><h2>${ICON.target} Where should I go?</h2>
     <p class="small muted" style="margin-top:0">Your saved rivers for ${SPECIES_LABEL[sp].toLowerCase()}, best day for each over the next few days.</p>
     <ul class="site-list">${top.map((o, i) => `<li><button data-act="fav" data-k="${o.k}">
       <span><span class="nm">${i === 0 ? '🏆 ' : ''}${esc(o.f.name.replace(/,?\s*[A-Z]{2}$/, ''))}</span><br><span class="small muted">${dayName(o.date)}${esc(runNote(o.f))}</span></span>
@@ -485,7 +611,7 @@ function viewPicker() {
       <button type="submit" style="flex:none">Search</button>
     </form>
     <div class="btn-row">
-      <button class="btn-primary" data-act="near">📍 Find gauges near me</button>
+      <button class="btn-primary" data-act="near">${ICON.locate} Find gauges near me</button>
     </div>
     <p class="small muted" style="margin:8px 0 0">No gauge on your river? <button class="linkish" data-act="manual">Enter conditions yourself</button></p>`;
   if (S.loading) h += `<p style="margin:14px 0 0"><span class="spin"></span>${esc(S.loading)}</p>`;
@@ -502,7 +628,7 @@ function viewPicker() {
       const badge = sc ? `<span class="chip-score lvl-${sc.level}${sc.score < min ? ' below' : ''}">${sc.score}</span>` : '<span class="meta">›</span>';
       return `<li><button data-act="fav" data-k="${k}"><span><span class="nm">${esc(f.name)}</span>${sc ? `<br><span class="small muted">${esc(sc.label)} · ${ago(sc.at)}</span>` : ''}</span>${badge}</button></li>`;
     }).join('')}</ul>
-      <button style="width:100%;margin-top:8px" data-act="prep">⬇️ Download saved rivers for offline</button>
+      <button style="width:100%;margin-top:8px" data-act="prep">${ICON.download} Download saved rivers for offline</button>
       ${S.prep ? `<p class="small muted">${esc(S.prep)}</p>` : ''}`;
   }
   h += `</div>`;
@@ -525,7 +651,7 @@ function viewSelectedBar() {
   }
   return `<div class="selbar"><span class="ck" aria-hidden="true">✓</span>
     <div class="selname"><b>${esc(name)}</b><div class="small muted">${sub}</div></div>
-    ${star}<button class="selchange" data-act="change">Change</button></div>`;
+    ${star}${S.manual ? '' : `<button class="star" data-act="shareriver" aria-label="Share this river">${ICON.share}</button>`}<button class="selchange" data-act="change">Change</button></div>`;
 }
 
 // Circular score gauge.
@@ -546,6 +672,8 @@ function viewScore() {
     <div class="score-row">${scoreRing(r.score, r.level)}
       <div><div class="score-label lvl-${r.level}">${esc(r.label)} <span class="muted small">· ${r.score}/100</span> ${info('score', 'How the score works')}</div>
       <div class="small">${esc(localize(r.summary))}</div></div></div>`;
+  const sn = (currentConditions().spotNotes || []).find((n) => n.startsWith('📍'));
+  if (sn && !r.capped) h += `<p class="small muted" style="margin:8px 0 0">${esc(localize(sn))}</p>`;
   if (r.score < min) h += `<div class="alert caution" style="margin:10px 0 0">Below your minimum of ${min}. Probably not worth the trip today.</div>`;
   const FACTOR_INFO = { temp: 'watertemp', flow: 'flow', trend: 'trend', clarity: 'clarity', weather: 'light', hatch: 'hatch', run: 'run' };
   h += `<details class="more"><summary>How this score works</summary>
@@ -597,7 +725,7 @@ function viewRunAlert() {
     const what = ri.status === 'peak' ? 'peak of the run' : 'fish are in the river';
     const btn = cur === sp ? '<span class="small">You\'re set up for it ✓</span>'
       : `<button class="chip on" data-act="set" data-f="species" data-v="${sp}">Fish for ${sp}</button>`;
-    return `<div class="run-alert"><div>🐟 <b>${esc(ri.run.label)}</b>: ${what} on the ${esc(p.name)}.</div>${btn}</div>`;
+    return `<div class="run-alert"><div>${ICON.fish} <b>${esc(ri.run.label)}</b>: ${what} on the ${esc(p.name)}.</div>${btn}</div>`;
   }).join('');
 }
 
@@ -690,7 +818,7 @@ function viewLearn() {
   const L = S.kb.learn;
   const match = (e) => !q || e.title.toLowerCase().includes(q) || (e.terms || []).some((t) => t.toLowerCase().includes(q)) || e.body.toLowerCase().includes(q);
   const groups = L.groups.map(([g, label]) => [label, L.entries.filter((e) => e.group === g && match(e))]).filter(([, es]) => es.length);
-  return `<div class="card"><h2>📖 Learn</h2>
+  return `<div class="card"><h2>${ICON.book} Learn</h2>
     <p class="small muted" style="margin-top:0">Plain-English explanations of conditions, lines, flies, techniques and knots. Tap ⓘ or any dotted word in the app to jump here.</p>
     <input type="search" id="learnq" placeholder="Search, e.g. T-11, 5X, Skagit, moon" value="${esc(S.learnQ || '')}" autocomplete="off">
     ${groups.map(([label, es]) => `<details class="sec" ${keep(`learn-${label}`, !!q)}><summary><b>${esc(label)}</b><span class="sec-sum">${es.length}</span></summary>
@@ -726,8 +854,11 @@ function viewSpot() {
   const i = S.inputs;
   const site = S.manual ? null : S.site;
   const ov = site ? S.spotOverride[site.id] || {} : {};
-  const gaugeBand = S.flow && S.flow.band, gaugeTrend = site && site.trend;
-  const band = ov.band || gaugeBand, trend = ov.trend || gaugeTrend;
+  const cl = site ? S.spotClaude[site.id] || {} : {};
+  const loc = site ? S.spotLoc[site.id] : null;
+  const offStream = loc && loc.relation === 'other-stream' && !loc.useGauge;
+  const gaugeBand = offStream ? null : S.flow && S.flow.band, gaugeTrend = site && site.trend;
+  const band = ov.band || cl.band || gaugeBand, trend = ov.trend || cl.trend || gaugeTrend;
   const t = tempNow();
   const tempCap = i.tempOverride !== '' ? (t.entered || 'us') : (site && site.waterTempF != null ? 'metric' : 'us');
   const tempText = `${t.estimated ? '≈' : ''}${fmt('temp', t.T, tempCap)}`;
@@ -735,15 +866,18 @@ function viewSpot() {
     site && band ? `flow ${band}` : null, `${WATER_LABEL[i.waterType]} ${fmt('len', +i.depthFt)}`, tempText].filter(Boolean).join(' · ');
   const o = currentObs();
   const seen = o && obsText(o);
-  const tag = (isOv) => `<span class="src-tag">${isOv ? 'your choice' : 'from gauge'}</span>`;
+  const tag = (f) => `<span class="src-tag">${ov[f] ? 'your choice' : cl[f] ? 'from Claude' : 'from gauge'}</span>`;
   const flowChips = (field, opts, current) => `<div class="chips">${opts.map(([v, l]) =>
     `<button class="chip ${current === v ? 'on' : ''}" data-act="spotov" data-f="${field}" data-v="${v}">${l}</button>`).join('')}</div>`;
   // Water that's high and rising, or rain you've reported, usually colors up: suggest checking clarity.
   const colorRisk = (['high', 'very high'].includes(band) && trend === 'rising') || (o && (o.water || []).includes('rain'));
+  const changed = ov.band || ov.trend || cl.at || offStream;
   const gaugeRows = site ? `
-    <label class="field">Flow vs normal ${info('flow')} ${band ? tag(!!ov.band) : ''}</label>${flowChips('band', Object.entries(FLOW_LABEL), band)}
-    <label class="field">Trend ${info('trend')} ${trend ? tag(!!ov.trend) : ''}</label>${flowChips('trend', Object.entries(TREND_LABEL), trend)}
-    ${ov.band || ov.trend ? '<p class="small" style="margin:-4px 0 8px"><button class="linkish" data-act="usegauge">Use gauge values</button></p>' : ''}` : '';
+    ${viewWhereAmI(loc, cl)}
+    <label class="field">Flow vs normal ${info('flow')} ${band ? tag('band') : ''}</label>${flowChips('band', Object.entries(FLOW_LABEL), band)}
+    ${offStream && !band ? '<p class="hint-line">You\'re on a different stream from the gauge. Tap the flow that matches what you see.</p>' : ''}
+    <label class="field">Trend ${info('trend')} ${trend ? tag('trend') : ''}</label>${flowChips('trend', Object.entries(TREND_LABEL), trend)}
+    ${changed ? '<p class="small" style="margin:-4px 0 8px"><button class="linkish" data-act="usegauge">Use gauge values</button></p>' : ''}` : '';
   return `<details class="card spot" ${keep('spot', !S.hadSession)}>
     <summary><span class="spot-k">Your spot</span><span class="spot-v">${esc(summary)}${seen ? `<span class="obs-line">👀 ${esc(seen)} · ${ago(o.at)}</span>` : ''}</span><span class="spot-edit">Change</span></summary>
     ${viewObserve(o)}
@@ -758,6 +892,22 @@ function viewSpot() {
     <input type="number" inputmode="decimal" placeholder="${esc(`${tempText} now. Type your thermometer reading (${unitOf('temp')})`)}"
       value="${i.tempOverride !== '' ? val('temp', +i.tempOverride, t.entered || 'us') : ''}" data-in="tempOverride">
   </details>`;
+}
+
+// Where you are relative to the gauge, plus the optional Claude refine.
+function viewWhereAmI(loc, cl) {
+  const where = S.locBusy ? '<span class="spin"></span>Finding your spot on the river…'
+    : loc ? `<b>${esc(locText(loc))}</b> ${info('upstream')}` : 'The gauge may not be right where you are.';
+  return `<div class="whereami">
+    <div class="wa-top"><span class="wa-ico" aria-hidden="true">${ICON.pin}</span><span class="wa-text">${where}</span>
+      <button class="linkish small" data-act="whereami">${loc ? 'Update' : 'Where am I?'}</button></div>
+    ${cl.at ? `<p class="small" style="margin:6px 0 0">💬 Adjusted by Claude ${ago(cl.at)}${cl.confidence ? ` (${esc(cl.confidence)} confidence)` : ''}${cl.note ? `: ${esc(cl.note)}` : ''}</p>` : ''}
+    <details class="more" ${S.spotPasteOpen ? 'open' : ''}><summary class="small">Refine my spot with Claude</summary>
+      <p class="small muted" style="margin-top:0">Claude looks at tributaries, springs and dams between you and the gauge, then suggests flow, temp and clarity for your spot. Copy its whole answer and paste it here.</p>
+      <div class="btn-row"><button data-act="spotask">${ICON.chat} Ask Claude ↗</button><button data-act="spotclip">${ICON.paste} Paste answer</button></div>
+      <textarea id="spotpaste" style="min-height:70px;margin-top:8px" placeholder="Or paste Claude's answer here"></textarea>
+      <button style="width:100%;margin-top:8px" data-act="spotsave">Apply to my spot</button></details>
+  </div>`;
 }
 
 // "What are you seeing?" chips. Likely hatches for today come first among the bugs.
@@ -791,7 +941,7 @@ function viewBestBet() {
   const s = r.setups[0];
   if (!s) return '';
   return `<div class="card bestbet">
-    <div class="rank">🎣 Best bet right now</div>
+    <div class="rank">Best bet right now</div>
     <h2>${esc(s.title)}</h2>
     ${stop ? `<p class="danger" style="margin:0 0 6px">🛑 ${esc(localize(stop.text))}</p>` : ''}
     <p class="spec">${esc(localize(keySpec(s)))}</p>
@@ -810,7 +960,7 @@ function viewChosen() {
   h += viewForecast();
   if (S.manual) h += viewManual();
   else h += viewConditions() + viewAbout();
-  h += `<div class="sticky-cta"><button class="btn-primary" data-tab="setups">🎣 Setups for this spot</button></div>`;
+  h += `<div class="sticky-cta"><button class="btn-primary" data-tab="setups">Setups for this spot ${ICON.arrow}</button></div>`;
   return h;
 }
 
@@ -826,6 +976,27 @@ function runCalendar(runs, month) {
       return `<span class="${cls}${mo === month ? ' now' : ''}" title="${cls || 'no run'}">${m}</span>`;
     }).join('')}</div></div>`).join('')}
     <div class="small muted">Dark = peak · light = fish in the river · outlined = this month</div></div>`;
+}
+
+// Month-by-month hatches for this river: its signature hatches first, then the general chart for the region.
+function hatchCalendar(site, p, month) {
+  const region = regionFor(site.lon);
+  const lib = S.kb.rivers.hatchLibrary || {};
+  const sig = new Set((p && p.hatches || []).map((x) => (typeof x === 'string' ? lib[x] : x)).filter(Boolean).map((x) => x.name.toLowerCase()));
+  const list = allHatches(S.kb, p)
+    .filter((h) => sig.has(h.name.toLowerCase()) || (h.regions || ['all']).some((r) => r === 'all' || r === region))
+    .map((h) => ({ h, sig: sig.has(h.name.toLowerCase()) }))
+    .sort((a, b) => (b.sig - a.sig) || (Math.min(...a.h.months) - Math.min(...b.h.months)));
+  if (!list.length) return null;
+  const next = (month % 12) + 1;
+  const now = list.filter((x) => x.h.months.includes(month));
+  const soon = list.filter((x) => x.h.months.includes(next) && !x.h.months.includes(month));
+  const short = (n) => n.replace(/\s*\(.*\)$/, '');
+  const rows = list.map(({ h, sig: s }) => `<div class="runcal-row"><div class="runcal-label">${s ? '★ ' : ''}${esc(short(h.name))}${h.temp ? ` <span class="muted small">${fmt('temp', h.temp[0])}–${fmt('temp', h.temp[1])}</span>` : ''}</div>
+    <div class="runcal-months">${MONTH_ABBR.map((m, k) => `<span class="${h.months.includes(k + 1) ? 'in' : ''}${k + 1 === month ? ' now' : ''}">${m}</span>`).join('')}</div></div>`).join('');
+  const html = `${soon.length ? `<p class="small" style="margin:4px 0 6px"><b>Coming up next month:</b> ${soon.map((x) => esc(short(x.h.name))).join(', ')}</p>` : ''}
+    <div class="runcal">${rows}<div class="small muted">Shaded = usually hatching · outlined = this month${sig.size ? ' · ★ = this river\'s signature hatch' : ''}. Water temp is the range where each bug is active.</div></div>`;
+  return { summary: now.length ? `${now.length} this month` : 'quiet this month', html };
 }
 
 const ageText = (iso) => {
@@ -908,6 +1079,8 @@ function viewAbout() {
   } else {
     h += `<p style="margin-top:0">No profile for this river yet, so setups use conditions only. Build one with Claude to add which fish are here, run timing, signature hatches and local report sources.</p>`;
   }
+  const cal = hatchCalendar(site, p, month);
+  if (cal) h += section('hatchcal', 'Hatch calendar', cal.summary, cal.html);
   const rep = reportsFor(p);
   const newest = rep.items[0];
   const repSum = newest ? `${esc(newest.source)}, ${ageText(newest.date)}` : rep.dnr ? `Michigan DNR, ${ageText(rep.dnr.date)}` : 'none yet';
@@ -916,11 +1089,11 @@ function viewAbout() {
   h += section('mynotes', 'My notes', note ? esc(note.slice(0, 40)) + (note.length > 40 ? '…' : '') : 'add your own',
     `<textarea data-rivernotes="${esc(key)}" style="min-height:70px" placeholder="Your own tips for this river (spots, flies that worked)…">${esc(note)}</textarea>`);
   if (!p || p.local) {
-    h += `<div class="btn-row" style="margin-top:12px"><button data-act="buildprofile">💬 ${p ? 'Update' : 'Build'} profile with Claude ↗</button></div>
+    h += `<div class="btn-row" style="margin-top:12px"><button data-act="buildprofile">${ICON.chat} ${p ? 'Update' : 'Build'} profile with Claude ↗</button></div>
       <details class="more"${S.profileOpen ? ' open' : ''}><summary>Paste Claude's profile</summary>
       <p class="small muted" style="margin-top:0">Copy Claude's whole answer, then paste it here.</p>
       <textarea id="profpaste" style="min-height:80px" placeholder="Paste Claude's answer"></textarea>
-      <div class="btn-row" style="margin-top:8px"><button data-act="profclip">📋 Paste from clipboard</button><button data-act="saveprofile">Save profile</button></div></details>`;
+      <div class="btn-row" style="margin-top:8px"><button data-act="profclip">${ICON.paste} Paste from clipboard</button><button data-act="saveprofile">Save profile</button></div></details>`;
   }
   if (p && p.local) h += `<p class="small" style="margin:8px 0 0"><button class="linkish" data-act="shareprofile">Copy profile to share</button> · <button class="linkish danger" data-act="delprofile">Remove profile</button></p>`;
   const regs = S.kb.rivers.regs || {}, st = (key.split('|')[1] || '').toUpperCase();
@@ -1047,9 +1220,60 @@ function viewConditions() {
   }
   h += `</div>`;
   if (wx) h += `<p class="sunmoon">☀︎ ${fmtTime(sun.sunrise)} – ${fmtTime(sun.sunset)} · ${moonPhase()} ${info('moon', 'Does the moon matter?')}</p>`;
+  h += viewChart();
   const foot = [fl ? `Normal today ${fmt('flow', fl.p25, 'us').replace(/ .*$/, '')}–${fmt('flow', fl.p75, 'us')}` : '', wx ? `weather ${ago(wx.fetchedAt)}` : ''].filter(Boolean).join(' · ');
   if (foot) h += `<p class="small muted" style="margin:8px 0 0">${foot}</p>`;
   return h + `</div>`;
+}
+
+// Last 7 days of flow (and water temp) for the chart. Saved per river so it shows offline.
+async function loadHistory(site) {
+  const key = `hist:${site.id}`;
+  const saved = await store.get(key);
+  if (saved && S.site && S.site.id === site.id) S.history = saved;
+  if (!navigator.onLine || (saved && Date.now() - saved.at < 30 * 60e3)) { if (saved) rerenderRiver(site); return; }
+  try {
+    const h = await getHistory(site.id);
+    if (h) { S.history = { ...h, id: site.id }; store.set(key, S.history); }
+  } catch (e) { /* keep the saved copy */ }
+  rerenderRiver(site);
+}
+const rerenderRiver = (site) => { if (S.site && S.site.id === site.id && S.tab === 'water' && !isPicking()) rerender(); };
+
+function viewChart() {
+  const H = S.history;
+  if (!H || H.id !== S.site.id || !H.flow || H.flow.length < 6) return '';
+  const W = 320, HT = 120, L = 2, R = 2, T = 8, B = 18;
+  const f = H.flow, tf = (H.tempF || []).length > 5 ? H.tempF : null, fl = S.flow;
+  const t0 = f[0].t, t1 = f[f.length - 1].t;
+  const vals = f.map((p) => p.v);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (fl) { lo = Math.min(lo, fl.p25); hi = Math.max(hi, fl.p75); }
+  const padV = (hi - lo) * 0.08 || 1; lo = Math.max(0, lo - padV); hi += padV;
+  const x = (t) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R);
+  const yOf = (a, b) => (v) => T + (1 - (v - a) / (b - a || 1)) * (HT - T - B);
+  const y = yOf(lo, hi);
+  const path = (pts, yy) => pts.map((p, i) => `${i ? 'L' : 'M'}${x(p.t).toFixed(1)},${yy(p.v).toFixed(1)}`).join('');
+  let svg = '';
+  if (fl) svg += `<rect class="ch-band" x="${L}" y="${y(fl.p75).toFixed(1)}" width="${W - L - R}" height="${Math.max(1, y(fl.p25) - y(fl.p75)).toFixed(1)}"/>`;
+  // Midnight lines with day labels.
+  const d = new Date(t0); d.setHours(24, 0, 0, 0);
+  for (; d.getTime() < t1; d.setDate(d.getDate() + 1)) {
+    const xx = x(d.getTime()).toFixed(1);
+    svg += `<line class="ch-day" x1="${xx}" x2="${xx}" y1="${T}" y2="${HT - B}"/><text class="ch-lbl" x="${(+xx + 3).toFixed(1)}" y="${HT - 5}">${d.toLocaleDateString([], { weekday: 'short' })}</text>`;
+  }
+  let tRange = '';
+  if (tf) {
+    const tv = tf.map((p) => p.v), tlo = Math.min(...tv) - 1, thi = Math.max(...tv) + 1;
+    svg += `<path class="ch-temp" d="${path(tf, yOf(tlo, thi))}"/>`;
+    tRange = `${fmt('temp', Math.min(...tv), 'metric')}–${fmt('temp', Math.max(...tv), 'metric')}`;
+  }
+  const last = f[f.length - 1];
+  svg += `<path class="ch-flow" d="${path(f, y)}"/><circle class="ch-now" cx="${x(last.t).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="3.5"/>`;
+  return `<div class="chart"><div class="chart-head"><b>Last 7 days</b> ${info('chart', 'Reading the chart')}</div>
+    <svg viewBox="0 0 ${W} ${HT}" class="chart-svg" role="img" aria-label="Flow over the last 7 days">${svg}</svg>
+    <div class="chart-key small"><span><i class="k-flow"></i>Flow ${fmt('flow', Math.min(...vals), 'us')}–${fmt('flow', Math.max(...vals), 'us')}</span>
+      ${tf ? `<span><i class="k-temp"></i>Water temp ${tRange}</span>` : ''}${fl ? '<span><i class="k-band"></i>Normal for today</span>' : ''}</div></div>`;
 }
 
 function viewManual() {
@@ -1068,7 +1292,7 @@ let lastResult = null;
 
 function viewSetups() {
   if (!S.kb) return '<p class="pad muted">Loading…</p>';
-  if (!S.site && !S.manual) return `<div class="card"><h2>No river picked yet</h2><p>Go to the <b>River</b> tab, find a gauge near you (or enter conditions), then come back here.</p><button class="btn-primary" data-tab="water">🌊 Pick a river</button></div>`;
+  if (!S.site && !S.manual) return `<div class="card"><h2>No river picked yet</h2><p>Go to the <b>River</b> tab, find a gauge near you (or enter conditions), then come back here.</p><button class="btn-primary" data-tab="water">${ICON.river} Pick a river</button></div>`;
   const cond = currentConditions();
   const r = recommend(cond, S.kb, S.gear, S.catches);
   lastResult = r;
@@ -1079,10 +1303,10 @@ function viewSetups() {
     <span class="chip-score lvl-${rt.level}" title="Conditions score">${rt.score}</span></div>
     <div class="small">${SPECIES_LABEL[c.species] || 'Trout'} · water ${c.tempEstimated ? '≈' : ''}${fmt('temp', c.waterTempF)} (${esc(tempSrc)}) · flow ${cond.flowBand || 'unknown'}${c.flowTrend ? ` ${trendArrow(c.flowTrend)}` : ''} · ${CLARITY_LABEL[c.clarity].toLowerCase()} · ${WATER_LABEL[c.waterType].toLowerCase()} ${fmt('len', c.depthFt)} · ${c.tod}</div>
     ${viewRunAlert()}
-    <p style="margin:8px 0 0"><button class="linkish" data-act="toask">💬 Ask Claude about these conditions</button></p></div>`;
+    <p style="margin:8px 0 0"><button class="linkish" data-act="toask">${ICON.chat} Ask Claude about these conditions</button></p></div>`;
   h += viewNudge();
   for (const w of r.warnings) h += `<div class="alert ${w.level}">${w.level === 'stop' ? '🛑 ' : '⚠️ '}${esc(localize(w.text))}</div>`;
-  h += readingTheRiver(r.notes, c.river);
+  h += readingTheRiver([...(cond.spotNotes || []), ...r.notes], c.river);
   h += viewClaudeAnswers();
 
   h += setupMenu(c);
@@ -1143,6 +1367,9 @@ function buildPrompt(question) {
   if (S.manual) lines.push('- River: entered by hand (no gauge)');
   else {
     lines.push(`- River: ${S.site.name} (USGS gauge ${S.site.id})`);
+    const loc = S.spotLoc[S.site.id], cl = S.spotClaude[S.site.id];
+    if (loc) lines.push(`- My spot: ${locText(loc).replace("You're", 'I am')}`);
+    if (cl && cl.note) lines.push(`- Earlier read of my spot: ${cl.note}`);
     if (S.site.cfs != null) lines.push(`- Flow: ${Math.round(S.site.cfs)} cfs${S.flow ? `, ${S.flow.band} (${S.flow.pct}% of normal for today)` : ''}${S.site.trend ? `, ${S.site.trend}` : ''}`);
   }
   if (S.manual) lines.push(`- Flow: ${cond.flowBand || 'unknown'} compared with normal, ${c.flowTrend || 'trend unknown'}`);
@@ -1210,6 +1437,43 @@ async function copyText(text) {
   } catch (e) { return false; }
 }
 
+// ---------- share with friends (phone share sheet, or copy) ----------
+
+const APP_URL = 'https://damienrocchi-star.github.io/fly-buddy/';
+async function shareIt({ title, text, url, file }) {
+  const data = { title, text: url ? `${text}\n${url}` : text };
+  try {
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ ...data, files: [file] }); return; }
+    if (navigator.share) { await navigator.share(data); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  toast((await copyText(data.text)) ? 'Copied. Paste it into a message to your buddy.' : 'Could not share on this phone.');
+}
+
+function shareRiver() {
+  const s = S.site, r = currentRating();
+  const lines = [`${s.name}`];
+  if (r) lines.push(`Fly Buddy score today: ${r.score}/100 (${r.label}). ${localize(r.summary)}`);
+  const c = currentConditions();
+  lines.push([s.cfs != null ? fmt('flow', s.cfs, 'us') : '', c.waterTempF != null ? `water ${fmt('temp', c.waterTempF)}` : ''].filter(Boolean).join(' · '));
+  shareIt({ title: s.name, text: lines.filter(Boolean).join('\n'), url: `${APP_URL}?site=${s.id}` });
+}
+
+function setupText(s) {
+  return [`${s.title}${S.site ? ` on the ${S.site.name.replace(/,?\s*[A-Z]{2}$/, '')}` : ''}`,
+    `Rod: ${s.rod.text.replace(/^your /, '')}`, `Line: ${localize(s.line)}`,
+    'Rig, top to bottom:', ...s.rig.map((p) => `• ${localize(p.label)}${p.detail ? ` (${localize(p.detail)})` : ''}`),
+    `Flies: ${s.flies.slice(0, 4).map((f) => f.name).join(', ')}`].join('\n');
+}
+
+async function shareCatch(c) {
+  const when = new Date(c.date).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const text = [`${SPECIES_LABEL[c.species] || 'Trout'}${c.length && !isNaN(c.length) ? `, ${fmt('fish', +c.length)}` : ''} on a ${c.fly || 'fly'} (${techName(c.technique).toLowerCase()})`,
+    [c.cond && c.cond.site, when].filter(Boolean).join(', '), c.cond ? condSummary({ ...c.cond, site: null }) : ''].filter(Boolean).join('\n');
+  let file = null;
+  if (c.photo) { try { const b = await (await fetch(c.photo)).blob(); file = new File([b], 'catch.jpg', { type: b.type || 'image/jpeg' }); } catch (e) { /* share text only */ } }
+  shareIt({ title: 'My catch', text, url: APP_URL, file });
+}
+
 // Pull the FLYBUDDY block out of Claude's reply. Works even if the block got markdown-formatted.
 function parseAnswer(text) {
   const clean = text.replace(/\r/g, '');
@@ -1230,7 +1494,7 @@ function parseAnswer(text) {
 
 function viewAskClaude() {
   const q = S.askQ || '';
-  return `<details class="card ask" id="ask" ${keep('ask')}><summary><h2 style="margin:0">💬 Ask Claude about this</h2>
+  return `<details class="card ask" id="ask" ${keep('ask')}><summary><h2 style="margin:0">${ICON.chat} Ask Claude about this</h2>
     <span class="small muted">Get a second opinion, or ask about what you're seeing</span></summary>
     <p class="small muted">Opens Claude on this phone with today's conditions, the setups above and your gear already filled in. It uses your own Claude account (a free account works), with no cost to the app.</p>
     <div class="chips">${ASK_CHIPS.map((t) => `<button class="chip" data-act="askchip" data-v="${esc(t)}">${esc(t)}</button>`).join('')}</div>
@@ -1240,7 +1504,7 @@ function viewAskClaude() {
     <h3>Got an answer?</h3>
     <p class="small muted" style="margin-top:0">In Claude, tap <b>Copy</b> under the answer, then come back and paste it here. I'll pull out the setup and save it for this river.</p>
     <textarea id="answer" style="min-height:90px" placeholder="Paste Claude's answer here"></textarea>
-    <div class="btn-row" style="margin-top:10px"><button data-act="pasteclip">📋 Paste from clipboard</button><button data-act="saveanswer">Save answer</button></div>
+    <div class="btn-row" style="margin-top:10px"><button data-act="pasteclip">${ICON.paste} Paste from clipboard</button><button data-act="saveanswer">Save answer</button></div>
   </details>`;
 }
 
@@ -1248,14 +1512,14 @@ function viewClaudeAnswers() {
   const list = S.claudeAnswers || [];
   if (!list.length) return '';
   const card = (a, k) => `<div class="card claude-card">
-    <div class="rank">💬 Claude's suggestion · ${ago(a.at)}</div>
+    <div class="rank">${ICON.chat} Claude's suggestion · ${ago(a.at)}</div>
     <h2>${esc(a.title || 'Claude\'s advice')}</h2>
     ${a.question ? `<p class="small muted" style="margin:0 0 8px">You asked: ${esc(a.question)}</p>` : ''}
     ${a.flies.length ? `<h3>Flies</h3><ul class="fly-list">${a.flies.map((f) => `<li><span>${ownedFly(f) ? '<span class="own">✓ </span>' : ''}${esc(f)}</span></li>`).join('')}</ul>` : ''}
     ${a.rig.length ? `<h3>Rig</h3><ul class="notes">${a.rig.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     ${a.tips.length ? `<h3>Tips</h3><ul class="notes">${a.tips.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     ${a.text ? `<details class="more"><summary>${a.structured ? 'Claude\'s full answer' : 'Claude\'s answer'}</summary><div class="answer-text">${esc(a.text)}</div></details>` : ''}
-    <div class="btn-row" style="margin-top:10px">${a.flies.length ? `<button data-act="logclaude" data-k="${k}">🐟 Log a catch on this</button>` : ''}<button class="linkish danger" data-act="delanswer" data-k="${k}">Remove</button></div>
+    <div class="btn-row" style="margin-top:10px">${a.flies.length ? `<button data-act="logclaude" data-k="${k}">${ICON.fish} Log a catch on this</button>` : ''}<button class="linkish danger" data-act="delanswer" data-k="${k}">Remove</button></div>
   </div>`;
   let h = card(list[0], 0);
   if (list.length > 1) h += `<details class="more card"><summary>Earlier Claude answers for this river (${list.length - 1})</summary>${list.slice(1).map((a, i) => card(a, i + 1)).join('')}</details>`;
@@ -1314,21 +1578,21 @@ function compactSetup(s, k) {
 // One-time hint for new users: add gear so setups can mark what you own.
 function viewNudge() {
   if (S.nudgeDismissed || S.gear.rods.length || S.gear.flies.length) return '';
-  return `<div class="card nudge"><b>Tip:</b> add your rods and flies on the <b>More</b> tab. Setups will then use your rods, mark flies you own with ✓ and build a setup from your own box.
-    <div class="btn-row" style="margin-top:8px"><button data-tab="gear">🧰 Go to More</button><button class="linkish" data-act="dismissnudge">Not now</button></div></div>`;
+  return `<div class="card nudge"><b>Tip:</b> add your rods and flies on the <b>Gear</b> tab. Setups will then use your rods, mark flies you own with ✓ and build a setup from your own box.
+    <div class="btn-row" style="margin-top:8px"><button data-tab="gear">${ICON.gear} Go to Gear</button><button class="linkish" data-act="dismissnudge">Not now</button></div></div>`;
 }
 
 function fromBoxCard(fb) {
   if (!fb) return '';
-  const head = '<div class="rank">🧰 From your fly box</div>';
+  const head = '<div class="rank">From your fly box</div>';
   if (fb.status === 'ok') return setupCard(fb.setup, -1, false, head, 'boxsetup');
   const msg = {
     topOwned: '<b>Good news:</b> the Best bet above uses flies you already carry.',
-    empty: 'Tick the flies you carry on the <b>More</b> tab and I\'ll build a setup from your own box.',
+    empty: 'Tick the flies you carry on the <b>Gear</b> tab and I\'ll build a setup from your own box.',
     nomatch: 'None of the flies in your box suit today\'s setups. Worth picking up some of the flies listed above.',
   }[fb.status];
   return `<div class="card boxsetup">${head}<p style="margin:6px 0 0">${msg}</p>
-    ${fb.status === 'empty' ? '<p style="margin:10px 0 0"><button style="width:100%" data-tab="gear">🧰 Go to my fly box</button></p>' : ''}</div>`;
+    ${fb.status === 'empty' ? `<p style="margin:10px 0 0"><button style="width:100%" data-tab="gear">${ICON.gear} Go to my fly box</button></p>` : ''}</div>`;
 }
 
 // Learn entry for each technique, shown as ⓘ next to the setup title.
@@ -1347,7 +1611,7 @@ function setupCard(s, k, inner, rankHtml, extraClass = '', noHead = false) {
     <h3>Flies</h3><ul class="fly-list">${s.flies.map((f) => `<li><span>${f.owned ? '<span class="own">✓ </span>' : ''}${esc(f.name)}</span><span class="role">${esc(f.role)}</span></li>`).join('')}</ul>
     ${s.flies.some((f) => f.owned) ? '<p class="small muted" style="margin:0 0 6px">✓ = in your fly box</p>' : ''}
     <details class="more tips" ${keep(`tips-${s.key}-${extraClass}`)}><summary>Tips (${s.tips.length})</summary><ul class="notes">${s.tips.map((t) => `<li>${esc(localize(t))}</li>`).join('')}</ul></details>
-    <p style="margin:12px 0 0"><button style="width:100%" data-act="quicklog" data-key="${s.key}"${extraClass === 'boxsetup' ? ' data-box="1"' : ''}>🐟 Caught one on this</button></p>
+    <div class="btn-row" style="margin-top:12px"><button data-act="quicklog" data-key="${s.key}"${extraClass === 'boxsetup' ? ' data-box="1"' : ''}>${ICON.fish} Caught one on this</button><button class="btn-icon" data-act="sharesetup" data-key="${s.key}"${extraClass === 'boxsetup' ? ' data-box="1"' : ''} aria-label="Share this setup">${ICON.share}</button></div>
   </div>`;
 }
 
@@ -1395,12 +1659,12 @@ function viewLog() {
         <div style="flex:1"><div class="t">${esc(c.fly || 'Unknown fly')}${c.length && !isNaN(c.length) ? ` · ${fmt('fish', +c.length)}` : c.length ? ` · ${esc(c.length)}"` : ''}</div>
         <div class="small">${esc(techName(c.technique))} · ${SPECIES_LABEL[c.species] || 'Trout'} · ${new Date(c.date).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div>
         <div class="small muted">${esc(condSummary(c.cond))}${c.notes ? `<br>${esc(c.notes)}` : ''}</div>
-        <button class="linkish small danger" data-act="dellog" data-k="${k}">Delete</button></div></div>`;
+        <div><button class="linkish small" data-act="sharecatch" data-k="${k}">Share</button> · <button class="linkish small danger" data-act="dellog" data-k="${k}">Delete</button></div></div></div>`;
     }
     h += `</div>`;
   }
   h += `<div class="card"><h2>Backup</h2><p class="small muted">Your log and gear live only on this phone. Save a backup file now and then.</p>
-    <div class="btn-row"><button data-act="export">⬇️ Save backup</button><label class="btn" style="text-align:center">⬆️ Restore<input type="file" accept="application/json" data-act="import" hidden></label></div></div>`;
+    <div class="btn-row"><button data-act="export">${ICON.download} Save backup</button><label class="btn" style="text-align:center">Restore<input type="file" accept="application/json" data-act="import" hidden></label></div></div>`;
   return h;
 }
 
@@ -1528,12 +1792,7 @@ const catalogSet = () => new Set(flyCatalog().flatMap((g) => g[1]).map((n) => n.
 
 function viewGear() {
   const g = S.gear;
-  const um = unitMode();
-  return `<div class="card"><h2>Units</h2>
-    <div class="seg" role="radiogroup" aria-label="Units">${UNIT_MODES.map(([k, l]) => `<button role="radio" aria-checked="${um === k}" class="${um === k ? 'on' : ''}" data-act="setunits" data-v="${k}">${l}</button>`).join('')}</div>
-    <p class="small muted" style="margin:6px 0 0">${um === 'metric' ? '°C, m³/s, metres, km/h, cm.' : um === 'captured' ? 'Each number as its source measured it: USGS water temp in °C, flow in cfs, weather in °C and km/h. Advice text stays in US units.' : '°F, cfs, feet, mph, inches.'}</p></div>
-  ${viewLearn()}
-  <div class="card"><h2>My rods</h2>
+  return `<div class="card"><h2>My rods</h2>
     <p class="small muted" style="margin-top:0">Setups will use the rod you own that fits best.</p>
     ${g.rods.length ? g.rods.map((r, k) => `<div class="rod-row"><span><b>${r.len} ft ${r.wt}wt</b> ${r.type !== 'single' ? r.type : 'single-hand'}</span><button class="linkish danger" data-act="delrod" data-k="${k}">Remove</button></div>`).join('') : '<p class="muted">No rods yet.</p>'}
     <h3>Add a rod</h3>
@@ -1543,16 +1802,24 @@ function viewGear() {
       <select id="rtype"><option value="single">Single-hand</option><option value="euro">Euro nymph</option><option value="switch">Switch</option><option value="spey">Spey</option></select>
     </div>
     <p style="margin:10px 0 0"><button style="width:100%" data-act="addrod">+ Add rod</button></p></div>
+  ${viewFlyBox()}
+  ${viewBoxPhotos()}`;
+}
+
+// More: settings, the Learn glossary, and about.
+function viewMore() {
+  const um = unitMode();
+  return `<div class="card"><h2>Units</h2>
+    <div class="seg" role="radiogroup" aria-label="Units">${UNIT_MODES.map(([k, l]) => `<button role="radio" aria-checked="${um === k}" class="${um === k ? 'on' : ''}" data-act="setunits" data-v="${k}">${l}</button>`).join('')}</div>
+    <p class="small muted" style="margin:6px 0 0">${um === 'metric' ? '°C, m³/s, metres, km/h, cm.' : um === 'captured' ? 'Each number as its source measured it: USGS water temp in °C, flow in cfs, weather in °C and km/h. Advice text stays in US units.' : '°F, cfs, feet, mph, inches.'}</p></div>
+  ${viewLearn()}
   <div class="card"><h2>Minimum score to fish</h2>
     <p class="small muted" style="margin-top:0">Rivers and days scoring below this get flagged as probably not worth the trip.</p>
     <label class="field">Minimum: <span id="minv">${minScore()}</span> / 100</label>
     <input type="range" min="0" max="100" step="5" value="${minScore()}" data-gear="minScore">
     <p class="small muted" style="margin:4px 0 0">${S.kb.rating.labels.map((l) => `${l.min}+ ${l.label}`).join(' · ')}</p></div>
-  ${viewFlyBox()}
-  ${viewBoxPhotos()}
-  <div class="card small muted">Fly Buddy uses free public data: USGS river gauges and Open-Meteo weather. All advice comes from built-in rules, with no paid services. Your data stays on this phone.<br><br>App version ${APP_VERSION}</div>`;
+  <div class="card small muted">Fly Buddy uses free public data: USGS river gauges and river network, Open-Meteo weather and NOAA river forecasts. All advice comes from built-in rules, with no paid services. Your data stays on this phone.<br><br>App version ${APP_VERSION}</div>`;
 }
-
 function viewFlyBox() {
   const owned = new Set(S.gear.flies.map((f) => f.toLowerCase()));
   const known = catalogSet();
@@ -1579,7 +1846,7 @@ function viewBoxPhotos() {
     <p class="small muted" style="margin-top:0">Snap each box so you can check what's in it on the water. Tap a photo to see it full size. Pinch to zoom.</p>
     ${ph.length ? `<div class="photo-grid">${ph.map((p, k) => `<figure><button class="thumb" data-act="viewphoto" data-k="${k}"><img src="${p.photo}" alt="${esc(p.label)}"></button>
       <figcaption><input type="text" value="${esc(p.label)}" data-boxlabel="${k}" aria-label="Photo name"><button class="linkish danger small" data-act="delphoto" data-k="${k}">Delete</button></figcaption></figure>`).join('')}</div>` : ''}
-    <label class="btn" style="display:block;text-align:center;margin-top:10px">📷 Add a fly box photo<input type="file" accept="image/*" data-act="boxphoto" hidden></label></div>`;
+    <label class="btn" style="display:block;text-align:center;margin-top:10px">${ICON.camera} Add a fly box photo<input type="file" accept="image/*" data-act="boxphoto" hidden></label></div>`;
 }
 
 function showPhoto(src) {
@@ -1655,7 +1922,36 @@ $app.addEventListener('click', async (e) => {
     S.spotOverride[id] = { ...(S.spotOverride[id] || {}), [b.dataset.f]: b.dataset.v };
     const y = window.scrollY; render(); window.scrollTo(0, y);
   }
-  else if (act === 'usegauge') { delete S.spotOverride[S.site.id]; const y = window.scrollY; render(); window.scrollTo(0, y); }
+  else if (act === 'usegauge') {
+    const id = S.site.id;
+    delete S.spotOverride[id]; delete S.spotClaude[id];
+    if (S.spotLoc[id]) { S.spotLoc[id].useGauge = true; store.set('spotLoc', S.spotLoc); }
+    store.set('spotClaude', S.spotClaude);
+    rerender();
+  }
+  else if (act === 'whereami') whereAmI(true);
+  else if (act === 'shareriver') shareRiver();
+  else if (act === 'sharesetup') {
+    const r = lastResult || recommend(currentConditions(), S.kb, S.gear, S.catches);
+    const s = b.dataset.box ? r.fromBox && r.fromBox.setup : r.setups.find((x) => x.key === b.dataset.key);
+    if (s) shareIt({ title: s.title, text: setupText(s), url: S.site ? `${APP_URL}?site=${S.site.id}` : APP_URL });
+  }
+  else if (act === 'sharecatch') shareCatch(S.catches[+b.dataset.k]);
+  else if (act === 'spotask') {
+    const prompt = buildSpotPrompt();
+    copyText(prompt);
+    window.open(CLAUDE_NEW + encodeURIComponent(prompt), '_blank');
+    S.spotPasteOpen = true;
+    toast('Opening Claude… When it answers, copy the whole reply and come back to paste it.');
+  }
+  else if (act === 'spotclip') {
+    try {
+      const t = await navigator.clipboard.readText();
+      document.getElementById('spotpaste').value = t;
+      if (t.trim()) saveSpotText(t); else toast('The clipboard is empty. Copy Claude\'s answer first.');
+    } catch (e) { toast('Long-press the box and choose Paste, then tap Apply.'); }
+  }
+  else if (act === 'spotsave') saveSpotText(document.getElementById('spotpaste').value);
   else if (act === 'learn') openLearn(b.dataset.id);
   else if (act === 'setunits') {
     S.gear.units = b.dataset.v; setUnitMode(b.dataset.v);
@@ -1878,7 +2174,7 @@ window.addEventListener('offline', render);
 (async function init() {
   store.persist();
   const h = location.hash.slice(1);
-  if (['water', 'setups', 'log', 'gear'].includes(h)) S.tab = h;
+  if (['water', 'setups', 'log', 'gear', 'more'].includes(h)) S.tab = h;
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   try { S.kb = await loadKB(); } catch (e) { $app.innerHTML = '<p class="pad">Could not load the app data. Open it once with signal so it can save itself for offline use.</p>'; return; }
   S.gear = await store.get('gear', { rods: [], flies: [] });
@@ -1890,11 +2186,24 @@ window.addEventListener('offline', render);
   S.nudgeDismissed = await store.get('nudgeDismissed', false);
   S.observed = await store.get('observed', {});
   S.tempEst = await store.get('tempEst', {});
+  S.spotLoc = await store.get('spotLoc', {});
+  S.spotClaude = await store.get('spotClaude', {});
   setUnitMode(S.gear.units);
   S.reports = await store.get('reports');
   loadReports().then(() => { if (S.tab === 'water' && !isPicking()) render(); });
   S.prep = await store.get('prepMsg', '');
   const sess = await store.get('session');
+  // A shared river link: ?site=04122500 opens that gauge.
+  const shared = new URLSearchParams(location.search).get('site');
+  if (shared && /^\d{8,15}$/.test(shared)) {
+    history.replaceState(null, '', location.pathname);
+    if (sess) { S.hadSession = true; S.inputs = { ...DEFAULT_INPUTS, ...sess.inputs }; }
+    S.tab = 'water';
+    const fav = S.favorites.find((f) => f.id === shared);
+    selectSite(fav || { id: shared, name: `USGS gauge ${shared}` });
+    updateFavScores();
+    return;
+  }
   if (sess) {
     S.hadSession = true;
     S.inputs = { ...DEFAULT_INPUTS, ...sess.inputs };

@@ -232,6 +232,26 @@ export async function getSite(id) {
   return s;
 }
 
+// Last 7 days of flow and water temp for the chart, thinned to one point per hour.
+// { flow: [{t, v}], tempF: [{t, v}] } (times as ms).
+export async function getHistory(id) {
+  const url = `${IV}?format=json&sites=${id}&parameterCd=${P_FLOW},${P_TEMP}&period=P7D`;
+  const s = parseIV(await getJSON(url, 25000))[0];
+  if (!s) return null;
+  const hourly = (series, conv = (v) => v) => {
+    const out = [];
+    let lastHour = null;
+    for (const p of series || []) {
+      const t = new Date(p.t).getTime(), h = Math.floor(t / 3600e3);
+      if (h === lastHour) continue;
+      lastHour = h;
+      out.push({ t, v: conv(p.v) });
+    }
+    return out;
+  };
+  return { flow: hourly(s.flowSeries), tempF: hourly(s.tempSeries, (c) => Math.round((c * 9 / 5 + 32) * 10) / 10), at: Date.now() };
+}
+
 // Daily flow percentiles for every day of the year: { "9-27": [p25, p50, p75] }.
 export async function getFlowStats(id) {
   const url = `${STAT}?format=rdb&sites=${id}&statReportType=daily&statTypeCd=p25,p50,p75&parameterCd=${P_FLOW}`;
