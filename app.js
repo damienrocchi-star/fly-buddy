@@ -2,6 +2,7 @@
 import * as store from './store.js';
 import { findNearby, searchByName, getSite, getFlowStats, getHistory, flowBand, distanceMi } from './data/usgs.js';
 import { locate } from './data/nldi.js';
+import { findPlace } from './data/places.js';
 import { ICON } from './icons.js';
 import { getWeather, sunFor, moonPhase, codeText } from './data/weather.js';
 import { recommend, regionFor, estimateWaterTempF, runInfo, monthRange, allHatches, prepare, scoreHatches } from './engine/recommend.js';
@@ -10,7 +11,7 @@ import { extractSignals, observationSignals, mergeSignals, OBS_MAX_AGE_MS } from
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 import { fmt, val, unitOf, fromInput, localize, setUnitMode, unitMode, UNIT_MODES } from './units.js';
 
-const APP_VERSION = '15'; // keep in step with CACHE in sw.js
+const APP_VERSION = '16'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -201,7 +202,7 @@ async function selectSite(basic) {
   if (S.site.lat != null) loadNoaa(S.site);
   if (S.site.lat != null) loadHistory(S.site);
   // Already know where you are (e.g. from "Find gauges near me")? Place you on the river.
-  if (S.gps && S.site.lat != null) whereAmI(false);
+  if (S.gps && S.site.lat != null) whereAmI();
   if (S.site.waterTempF == null && S.site.lat != null) {
     estimateNearbyTemp(S.site).then((ok) => { if (ok && S.tab !== 'gear') { const y = window.scrollY; render(); window.scrollTo(0, y); } });
   }
@@ -413,50 +414,69 @@ function spotNotes(site, loc, cl) {
   return n;
 }
 
-// Look up your spot on the river network (free USGS service). Cached per river, reused
-// while you're within half a mile of the last lookup.
-async function whereAmI(fresh) {
-  const site = S.site;
-  if (!site || site.lat == null) return;
-  try {
-    if (fresh || !S.gps) S.gps = await gps();
-  } catch (e) { if (fresh) locationError(e, () => whereAmI(true)); return; }
-  const prev = S.spotLoc[site.id];
-  if (!fresh && prev && distanceMi(prev.lat, prev.lon, S.gps.lat, S.gps.lon) < 0.5) return;
-  if (distanceMi(S.gps.lat, S.gps.lon, site.lat, site.lon) > 40) { if (fresh) toast('You\'re more than 40 mi from this gauge.'); return; }
-  try {
-    S.locBusy = true; if (fresh) rerender();
-    const r = await locate(S.gps.lat, S.gps.lon, site);
-    S.spotLoc[site.id] = { ...r, lat: S.gps.lat, lon: S.gps.lon, at: Date.now() };
-    store.set('spotLoc', S.spotLoc);
-  } catch (e) {
-    if (fresh) toast(navigator.onLine ? 'Could not look up the river network right now.' : 'No signal: try again when you have coverage.');
-  } finally { S.locBusy = false; }
-  if (S.site && S.site.id === site.id) rerender();
-}
-
 // Re-render without jumping the page.
 function rerender() { const y = window.scrollY; render(); window.scrollTo(0, y); }
 
-// "Refine my spot with Claude": hand-off prompt and the block we parse back.
-function buildSpotPrompt() {
-  const site = S.site, c = currentConditions(), loc = S.spotLoc[site.id];
+// Place a point (your GPS fix, or a place found on the map) on the river network and save it.
+async function placeAt(site, lat, lon, place, src) {
+  const r = await locate(lat, lon, site);
+  S.spotLoc[site.id] = { ...r, lat, lon, place: place || null, src, at: Date.now() };
+  store.set('spotLoc', S.spotLoc);
+  return S.spotLoc[site.id];
+}
+
+// Quietly place you when your phone's location is already known (e.g. after "Find gauges near me").
+// Reused while you're within half a mile of the last lookup. A place you set by name is left alone.
+async function whereAmI() {
+  const site = S.site;
+  if (!site || site.lat == null || !S.gps) return;
+  const prev = S.spotLoc[site.id];
+  if (prev && (prev.src !== 'gps' || distanceMi(prev.lat, prev.lon, S.gps.lat, S.gps.lon) < 0.5)) return;
+  if (distanceMi(S.gps.lat, S.gps.lon, site.lat, site.lon) > 40) return;
+  try { await placeAt(site, S.gps.lat, S.gps.lon, null, 'gps'); } catch (e) { return; }
+  if (S.site && S.site.id === site.id) rerender();
+}
+
+// Short label for the bar under the river name: "Barothy Lodge · about 12 mi upstream · adjusted".
+function spotLabel(site) {
+  const loc = S.spotLoc[site.id], cl = S.spotClaude[site.id];
+  if (!loc && !(cl && cl.at)) return '';
+  const rel = !loc ? '' : loc.relation === 'at' ? 'at the gauge' : loc.relation === 'other-stream' ? 'different stream'
+    : `about ${Math.max(1, Math.round(loc.miles))} mi ${loc.relation}`;
+  return [(loc && loc.place) || (cl && cl.place) || (loc && loc.src === 'gps' ? 'My location' : ''), rel, cl && cl.at ? 'adjusted' : ''].filter(Boolean).join(' · ');
+}
+
+// One line on what your location means for the gauge readings.
+function locEffect(site, loc) {
+  if (loc.relation === 'other-stream') return 'The gauge is on a different stream, so its flow isn\'t used for your score. Tap the flow you see in Your spot, or get local detail from Claude.';
+  if (loc.relation === 'at') return 'The gauge readings apply as they are.';
+  const hrs = Math.max(1, Math.round(loc.miles / 2.5));
+  return `Flow compared with normal still applies (it carries along the river). A rise or drop reaches you about ${hrs} h ${loc.relation === 'upstream' ? 'before' : 'after'} the gauge shows it.`;
+}
+
+// Hand-off prompt for Claude and the block we parse back. `place` is a name you typed.
+function buildSpotPrompt(place) {
+  const site = S.site, c = currentConditions();
+  // Only a spot placed by GPS or the map has real coordinates. One Claude placed earlier is just a name.
+  const loc = S.spotLoc[site.id] && S.spotLoc[site.id].src !== 'claude' ? S.spotLoc[site.id] : null;
+  const river = site.name.replace(/,?\s*[A-Z]{2}$/, '').split(/\s+(?:at|near|nr|below|above)\s+/i)[0];
+  const known = loc ? ` (${locText(loc).replace("You're", 'that is')}, by the USGS river network)` : '';
   const L = [];
-  L.push("I'm fly fishing and my app reads conditions from a USGS gauge that isn't exactly where I'm standing. Please estimate how conditions at my spot differ from the gauge.");
+  L.push("I'm fly fishing and my app reads conditions from a USGS gauge that isn't exactly at my spot. Please estimate how conditions at my spot differ from the gauge.");
   L.push('');
   L.push(`- Gauge: ${site.name} (USGS ${site.id}) at ${site.lat.toFixed(4)}, ${site.lon.toFixed(4)}`);
-  const place = ((S.spotPlace || {})[site.id] || '').trim();
-  // A place you typed wins over the phone's location (you may be planning from home).
-  if (place) L.push(`- My spot: ${place} (on or near the ${site.name.replace(/,?\s*[A-Z]{2}$/, '').split(/\s+(?:at|near|nr|below|above)\s+/i)[0]}${stateOf(site.name) ? `, ${stateOf(site.name)}` : ''}). Please work out where that is on the river.`);
-  else if (S.gps) L.push(`- My location: ${S.gps.lat.toFixed(4)}, ${S.gps.lon.toFixed(4)}${loc ? ` (${locText(loc).replace("You're", 'I am')}, by the USGS river network)` : ''}`);
+  if (place) L.push(`- My spot: ${place} (on or near the ${river}${stateOf(site.name) ? `, ${stateOf(site.name)}` : ''})${loc && loc.place === place ? `, at ${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}${known}` : '. Please work out where that is on the river.'}`);
+  else if (loc) L.push(`- My location: ${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}${known}`);
   if (site.cfs != null) L.push(`- Gauge flow: ${Math.round(site.cfs)} cfs${S.flow ? `, ${S.flow.band} (${S.flow.pct}% of normal for today)` : ''}${site.trend ? `, ${site.trend}` : ''}`);
   L.push(`- Water temp: ${c.waterTempF != null ? `${c.waterTempF}°F (${c.tempSource || 'estimated'})` : 'not measured'}`);
   if (S.wx) L.push(`- Weather: ${S.wx.airF}°F air, ${codeText(S.wx.code).toLowerCase()}`);
   L.push(`- Date: ${new Date().toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}`);
   L.push('');
-  L.push('Think about tributaries, springs, dams or tailwaters, lakes and land use between the gauge and me, and how far apart we are along the river. Keep the answer short.');
+  L.push('Think about tributaries, springs, dams or tailwaters, lakes and land use between the gauge and my spot, and how far apart they are along the river. Keep the answer short.');
   L.push('At the very end, add this block exactly, filled in (leave a line out if you are unsure):');
   L.push('FLYBUDDY-SPOT-START');
+  L.push('position: <upstream | downstream | at gauge | other stream: where my spot is relative to the gauge>');
+  L.push('distance_mi: <miles between my spot and the gauge>');
   L.push('flow: <very low | low | normal | high | very high, compared with normal for my spot>');
   L.push('temp_adjust_f: <number from -6 to 6: my water temp minus the gauge reading>');
   L.push('clarity: <clear | slight | stained | muddy>');
@@ -473,7 +493,7 @@ function parseSpot(text) {
   const out = {};
   for (let line of m[1].split('\n')) {
     line = line.replace(/^[\s*\-•`]+|[`*]+$/g, '').replace(/\*\*/g, '').trim();
-    const kv = /^(flow|temp_adjust_f|clarity|trend|confidence|note)\s*:\s*(.+)$/i.exec(line);
+    const kv = /^(position|distance_mi|flow|temp_adjust_f|clarity|trend|confidence|note)\s*:\s*(.+)$/i.exec(line);
     if (!kv) continue;
     const k = kv[1].toLowerCase(), v = kv[2].trim(), lv = v.toLowerCase().replace(/[<>]/g, '');
     if (k === 'flow' && FLOW_LABEL[lv]) out.band = lv;
@@ -482,33 +502,235 @@ function parseSpot(text) {
     if (k === 'confidence' && ['low', 'medium', 'high'].includes(lv)) out.confidence = lv;
     if (k === 'temp_adjust_f') { const n = parseFloat(v); if (!isNaN(n)) out.tempAdjF = Math.max(-6, Math.min(6, Math.round(n))); }
     if (k === 'note' && !/^<.*>$/.test(v)) out.note = v.slice(0, 200);
+    if (k === 'position') out.relation = /other/.test(lv) ? 'other-stream' : /up/.test(lv) ? 'upstream' : /down/.test(lv) ? 'downstream' : /at/.test(lv) ? 'at' : undefined;
+    if (k === 'distance_mi') { const n = parseFloat(v); if (!isNaN(n) && n >= 0 && n < 200) out.miles = n; }
   }
+  if (!out.relation) { delete out.relation; delete out.miles; }
   return Object.keys(out).length ? out : null;
 }
 
-async function saveSpotText(text) {
+// What the score and setups are using right now (for the before-and-after list).
+function spotSnapshot() {
+  const c = currentConditions(), r = currentRating();
+  return { band: c.flowBand || 'unknown', trend: c.flowTrend || 'unknown', temp: c.waterTempF != null ? c.waterTempF : prepare(c).waterTempF,
+    clarity: c.clarity, score: r ? r.score : null };
+}
+
+// Apply Claude's answer. -> { ok, reason?, before, after, undo }
+async function applySpotText(text, place) {
   const r = parseSpot(text);
+  if (!r) return { ok: false, reason: String(text || '').trim() ? 'noblock' : 'empty' };
   const id = S.site.id;
-  if (!r) {
-    const typed = String(text || '').trim();
-    // A short line with no block is almost certainly a place name typed into the wrong box.
-    if (typed && typed.length < 120 && !/FLYBUDDY/i.test(typed)) {
-      S.spotPlace = { ...(S.spotPlace || {}), [id]: typed }; store.set('spotPlace', S.spotPlace);
-      S.spotPasteOpen = true; rerender();
-      toast(`"${typed.slice(0, 40)}" looks like a place, so I've put it in step 1. Now tap Ask Claude.`);
-    } else toast(typed ? "That doesn't include Claude's FLYBUDDY-SPOT block. In Claude, tap Copy under the whole answer and paste again." : 'Paste Claude\'s answer into the box first.');
-    return;
-  }
-  const askedPlace = (S.spotAskedPlace != null ? S.spotAskedPlace : (S.spotPlace || {})[id] || '').trim();
-  S.spotClaude[id] = { ...r, place: askedPlace || null, at: Date.now() };
-  if (r.clarity) { S.inputs.clarity = r.clarity; saveSession(); }
+  const saved = JSON.stringify({ cl: S.spotClaude[id] || null, ov: S.spotOverride[id] || null, loc: S.spotLoc[id] || null, clarity: S.inputs.clarity });
+  const before = spotSnapshot();
+  const { relation, miles, ...adj } = r;
+  S.spotClaude[id] = { ...adj, place: place || null, at: Date.now() };
+  if (r.clarity) S.inputs.clarity = r.clarity;
   // Claude's read replaces your earlier chip choices for flow and trend.
   delete S.spotOverride[id];
-  await store.set('spotClaude', S.spotClaude);
-  S.spotPasteOpen = false;
+  // Claude placed a spot the map couldn't find.
+  const cur = S.spotLoc[id];
+  if (relation && place && !(cur && cur.place === place && cur.src !== 'claude')) {
+    S.spotLoc[id] = { relation, miles: miles != null ? miles : 0, lat: S.site.lat, lon: S.site.lon, place, src: 'claude', at: Date.now() };
+  }
+  const persist = () => { saveSession(); store.set('spotClaude', S.spotClaude); store.set('spotLoc', S.spotLoc); };
+  persist();
+  const undo = () => {
+    const s = JSON.parse(saved);
+    for (const [k, map] of [['cl', S.spotClaude], ['ov', S.spotOverride], ['loc', S.spotLoc]]) { if (s[k]) map[id] = s[k]; else delete map[id]; }
+    S.inputs.clarity = s.clarity;
+    persist(); rerender();
+  };
   rerender();
-  toast('Your spot is updated from Claude\'s answer.');
+  return { ok: true, before, after: spotSnapshot(), undo };
 }
+
+// Back to the gauge's own readings: clears your chip choices, Claude's read and your spot.
+function resetSpot() {
+  const id = S.site.id;
+  delete S.spotOverride[id]; delete S.spotClaude[id]; delete S.spotLoc[id];
+  S.spotAwaiting = null;
+  store.set('spotLoc', S.spotLoc); store.set('spotClaude', S.spotClaude);
+  rerender();
+}
+
+// ---------- "Set my spot" sheet: one step at a time ----------
+
+let spotSheet = null; // { wrap, step, place, matches, msg, result, busy }
+
+function openSpotSheet(step) {
+  const site = S.site;
+  if (!site || site.lat == null) { toast('Still loading this river. Try again in a moment.'); return; }
+  document.querySelectorAll('.sheet-wrap').forEach((x) => x.remove());
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-wrap spot-sheet';
+  const loc = S.spotLoc[site.id];
+  spotSheet = { wrap, step: step || 'choose', place: (S.spotPlace || {})[site.id] || (loc && loc.place) || '', matches: [], msg: '', result: null, busy: '' };
+  const close = () => { wrap.remove(); spotSheet = null; };
+  wrap.addEventListener('click', (ev) => { if (ev.target === wrap || ev.target.closest('.sheet-x')) close(); else spotSheetClick(ev, close); });
+  wrap.addEventListener('submit', (ev) => { ev.preventDefault(); spotFind(); });
+  wrap.addEventListener('input', (ev) => {
+    if (ev.target.id === 'sp-place') { spotSheet.place = ev.target.value; S.spotPlace = { ...(S.spotPlace || {}), [site.id]: ev.target.value }; store.set('spotPlace', S.spotPlace); }
+    if (ev.target.id === 'sp-paste') spotSheet.draft = ev.target.value;
+  });
+  document.body.appendChild(wrap);
+  drawSpotSheet();
+}
+
+function drawSpotSheet() {
+  const sh = spotSheet, site = S.site;
+  if (!sh) return;
+  const loc = S.spotLoc[site.id], cl = S.spotClaude[site.id];
+  const river = site.name.replace(/,?\s*[A-Z]{2}$/, '');
+  const head = (t) => `<div class="sheet-grip" aria-hidden="true"></div><div class="sheet-head"><h2 id="sheet-t">${t}</h2><button class="sheet-x" aria-label="Close">✕</button></div>`;
+  const msg = sh.msg ? `<p class="hint-line">${esc(sh.msg)}</p>` : '';
+  const busy = sh.busy ? `<p style="margin:10px 0"><span class="spin"></span>${esc(sh.busy)}</p>` : '';
+  let body;
+  if (sh.step === 'choose') {
+    const access = (riverProfile(site) || {}).access || [];
+    body = `${head('Where are you on this river?')}
+      <p class="small muted" style="margin-top:0">The gauge is at ${esc(river)}. Tell me your spot and I'll adjust for it.</p>
+      ${loc || (cl && cl.at) ? `<p class="sp-now"><b>Now:</b> ${esc(spotLabel(site))}</p>` : ''}
+      ${msg}${busy}
+      <button class="btn-primary" data-s="gps" ${sh.busy ? 'disabled' : ''}>${ICON.locate} Use my phone's location</button>
+      <div class="sp-or"><span>or</span></div>
+      <form class="inline"><input type="text" id="sp-place" value="${esc(sh.place)}" placeholder="Type a place, e.g. Barothy Lodge" autocomplete="off" enterkeyhint="search">
+        <button type="submit" style="flex:none" ${sh.busy ? 'disabled' : ''}>Find</button></form>
+      ${access.length ? `<div class="chips" style="margin-top:8px">${access.map((a, k) => `<button class="chip" data-s="access" data-k="${k}">${esc(a.name)}</button>`).join('')}</div>` : ''}
+      <p class="small muted" style="margin:8px 0 0">A typed place is looked up on OpenStreetMap. Only the name you type is sent.</p>
+      ${loc ? `<p style="margin:12px 0 0"><button data-s="detail" style="width:100%">${ICON.chat} Get local detail from Claude ↗</button></p>` : ''}
+      ${loc || (cl && cl.at) || S.spotOverride[site.id] ? '<p class="small" style="margin:12px 0 0"><button class="linkish" data-s="reset">Reset to the gauge\'s readings</button></p>' : ''}`;
+  } else if (sh.step === 'matches') {
+    body = `${head('Which one?')}
+      <ul class="site-list">${sh.matches.map((m, k) => `<li><button data-s="pick" data-k="${k}"><span><span class="nm">${esc(m.name)}</span><br><span class="small muted">${esc(m.detail)}</span></span><span class="meta">${m.miles.toFixed(0)} mi from gauge</span></button></li>`).join('')}</ul>
+      ${busy}
+      <div class="btn-row" style="margin-top:10px"><button data-s="notfound">None of these</button><button data-s="back">Back</button></div>`;
+  } else if (sh.step === 'notfound') {
+    body = `${head('Not on the map')}
+      <p>I couldn't find <b>${esc(sh.place)}</b> on the map near this gauge. Lodges and small access points often aren't listed.</p>
+      <button class="btn-primary" data-s="askplace">${ICON.chat} Ask Claude to place it ↗</button>
+      <p class="small muted" style="margin:8px 0 0">Claude works out where it is on the river and how conditions differ there. You paste its answer back in the next step.</p>
+      <p style="margin:12px 0 0"><button data-s="back" style="width:100%">Try another name</button></p>`;
+  } else if (sh.step === 'result') {
+    body = `${head(esc(loc.place || 'Your spot'))}
+      <p class="sp-result">${ICON.pin} <b>${esc(locText(loc))}</b></p>
+      <p class="small">${esc(locEffect(site, loc))}</p>
+      <button class="btn-primary" data-s="done">Done</button>
+      <p style="margin:10px 0 0"><button data-s="detail" style="width:100%">${ICON.chat} Get local detail from Claude ↗</button></p>
+      <p class="small muted" style="margin:6px 0 0">Optional: Claude looks at tributaries, springs and dams between you and the gauge, and suggests flow, water temp and clarity for your spot.</p>`;
+  } else if (sh.step === 'waiting') {
+    body = `${head('Waiting for Claude\'s answer')}
+      <p class="small" style="margin-top:0">In Claude, tap <b>Copy</b> under its whole answer. Then come back here.</p>
+      ${msg}
+      <button class="btn-primary" data-s="paste">${ICON.paste} Paste Claude's answer</button>
+      <details class="more" ${sh.draft || sh.showBox ? 'open' : ''}><summary class="small">Paste it by hand instead</summary>
+        <textarea id="sp-paste" style="min-height:80px" placeholder="Long-press here and choose Paste">${esc(sh.draft || '')}</textarea>
+        <button style="width:100%;margin-top:8px" data-s="apply">Apply</button></details>
+      <p class="small" style="margin:10px 0 0"><button class="linkish" data-s="askagain">Ask Claude again</button> · <button class="linkish" data-s="back">Start over</button></p>`;
+  } else {
+    const b = sh.result.before, a = sh.result.after;
+    const row = (label, x, y) => `<div class="ba-row${x === y ? ' same' : ''}"><span>${label}</span><span>${x === y ? `${esc(String(y))} <span class="muted">(no change)</span>` : `${esc(String(x))} → <b>${esc(String(y))}</b>`}</span></div>`;
+    body = `${head('Here\'s what changed')}
+      ${cl && cl.note ? `<p class="small" style="margin-top:0">${esc(cl.note)}${cl.confidence ? ` <span class="muted">(${esc(cl.confidence)} confidence)</span>` : ''}</p>` : ''}
+      <div class="ba">${row('Flow vs normal', b.band, a.band)}${row('Water temp', fmt('temp', b.temp), fmt('temp', a.temp))}${row('Clarity', CLARITY_LABEL[b.clarity].toLowerCase(), CLARITY_LABEL[a.clarity].toLowerCase())}${row('Trend', (TREND_LABEL[b.trend] || b.trend).toLowerCase(), (TREND_LABEL[a.trend] || a.trend).toLowerCase())}${b.score != null ? row('Score', b.score, a.score) : ''}</div>
+      <p class="small muted">The score and setups now use these. You can still change any of them in Your spot.</p>
+      <div class="btn-row"><button class="btn-primary" data-s="done">Use these</button><button data-s="undo">Undo</button></div>`;
+  }
+  sh.wrap.innerHTML = `<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-t">${body}</div>`;
+}
+
+function spotStep(step, patch) { if (!spotSheet) return; Object.assign(spotSheet, { step, msg: '', busy: '' }, patch || {}); drawSpotSheet(); }
+
+// Look up the typed place on the map.
+async function spotFind() {
+  const sh = spotSheet, site = S.site;
+  const text = (sh.place || '').trim();
+  if (!text) { spotStep('choose', { msg: 'Type a place first, or use your phone\'s location.' }); return; }
+  spotStep('choose', { busy: `Looking for ${text} on the map…` });
+  let matches = [];
+  try { matches = await findPlace(text, site.lat, site.lon, stateOf(site.name)); } catch (e) { /* treated as not found */ }
+  if (!spotSheet || spotSheet !== sh) return;
+  if (matches.length) spotStep('matches', { matches }); else spotStep('notfound');
+}
+
+// Run a river-network lookup for a point, then show the result step.
+async function spotPlace(lat, lon, place, src) {
+  const sh = spotSheet, site = S.site;
+  if (distanceMi(lat, lon, site.lat, site.lon) > 60) { spotStep('choose', { msg: `That's more than 60 mi from this gauge. Pick a closer gauge, or check the place name.` }); return; }
+  try {
+    await placeAt(site, lat, lon, place, src);
+  } catch (e) {
+    if (spotSheet === sh) spotStep('choose', { msg: navigator.onLine ? 'Could not look up the river network right now. Try again in a moment.' : 'No signal: try again when you have coverage.' });
+    return;
+  }
+  // A new spot starts from the gauge again: an earlier Claude read was for somewhere else.
+  const cl = S.spotClaude[site.id];
+  if (cl && (cl.place || null) !== (place || null)) { delete S.spotClaude[site.id]; store.set('spotClaude', S.spotClaude); }
+  rerender();
+  if (spotSheet === sh) spotStep('result');
+}
+
+function spotAsk(place) {
+  const prompt = buildSpotPrompt(place);
+  copyText(prompt);
+  const url = CLAUDE_NEW + encodeURIComponent(prompt);
+  window.open(url.length < 12000 ? url : 'https://claude.ai/new', '_blank');
+  S.spotAwaiting = { at: Date.now(), place: place || null, site: S.site.id };
+  spotStep('waiting');
+}
+
+async function spotApply(text) {
+  const sh = spotSheet;
+  const place = S.spotAwaiting ? S.spotAwaiting.place : ((S.spotLoc[S.site.id] || {}).place || null);
+  const res = await applySpotText(text, place);
+  if (!spotSheet || spotSheet !== sh) return;
+  if (!res.ok) {
+    spotStep('waiting', { draft: res.reason === 'empty' ? '' : sh.draft, msg: res.reason === 'empty' ? 'There\'s nothing to paste yet. Copy Claude\'s answer first.'
+      : 'That doesn\'t include Claude\'s FLYBUDDY-SPOT block. In Claude, tap Copy under the whole answer, then paste again.' });
+    return;
+  }
+  S.spotAwaiting = null;
+  spotStep('confirm', { result: res, draft: '' });
+}
+
+async function spotSheetClick(ev, close) {
+  const b = ev.target.closest('[data-s]');
+  if (!b || !spotSheet) return;
+  const sh = spotSheet, site = S.site, act = b.dataset.s;
+  if (act === 'gps') {
+    spotStep('choose', { busy: 'Finding your location…' });
+    try { S.gps = await gps(); } catch (e) {
+      if (spotSheet === sh) { if (e.code === 1) { close(); showLocationHelp(() => { openSpotSheet(); spotSheet.wrap.querySelector('[data-s=gps]').click(); }); } else spotStep('choose', { msg: e.message }); }
+      return;
+    }
+    if (spotSheet !== sh) return;
+    spotStep('choose', { busy: 'Placing you on the river…' });
+    await spotPlace(S.gps.lat, S.gps.lon, null, 'gps');
+  }
+  else if (act === 'pick') { const m = sh.matches[+b.dataset.k]; spotStep('matches', { busy: 'Placing it on the river…' }); await spotPlace(m.lat, m.lon, sh.place.trim() || m.name, 'map'); }
+  else if (act === 'access') { const a = riverProfile(site).access[+b.dataset.k]; spotStep('choose', { busy: 'Placing it on the river…', place: a.name }); await spotPlace(a.lat, a.lon, a.name, 'map'); }
+  else if (act === 'notfound') spotStep('notfound');
+  else if (act === 'back') spotStep('choose');
+  else if (act === 'askplace') spotAsk(sh.place.trim());
+  else if (act === 'detail') spotAsk((S.spotLoc[site.id] || {}).place || null);
+  else if (act === 'askagain') spotAsk(S.spotAwaiting ? S.spotAwaiting.place : ((S.spotLoc[site.id] || {}).place || null));
+  else if (act === 'paste') {
+    let t = '';
+    try { t = await navigator.clipboard.readText(); } catch (e) { spotStep('waiting', { showBox: true, msg: 'Your phone didn\'t let me read the clipboard. Paste it into the box below, then tap Apply.' }); return; }
+    await spotApply(t);
+  }
+  else if (act === 'apply') await spotApply(sh.draft || (sh.wrap.querySelector('#sp-paste') || {}).value || '');
+  else if (act === 'undo') { sh.result.undo(); close(); toast('Back to how it was.'); }
+  else if (act === 'reset') { resetSpot(); close(); toast('Using the gauge\'s readings.'); }
+  else if (act === 'done') close();
+}
+
+// Coming back from Claude: bring the paste step to the front.
+document.addEventListener('visibilitychange', () => {
+  const w = S.spotAwaiting;
+  if (document.hidden || !w || !S.site || S.site.id !== w.site || Date.now() - w.at > 30 * 60e3) return;
+  if (!spotSheet) openSpotSheet('waiting');
+});
 
 // ---------- conditions score ----------
 
@@ -704,17 +926,19 @@ function viewPicker() {
 
 function viewSelectedBar() {
   const s = S.site;
-  let name, sub, star = '';
+  let name, sub, star = '', spot = '';
   if (S.manual) { name = 'Manual conditions'; sub = 'Set the river conditions below'; }
   else {
     name = s.name;
     sub = S.loading ? `<span class="spin"></span>${esc(S.loading)}`
       : `USGS ${esc(s.id)}${s.time ? ` · reading ${ago(s.time)}` : ''}${S.offline ? ' · <b>offline copy</b>' : ''}`;
     const isFav = S.favorites.some((f) => f.id === s.id);
+    const label = S.loading ? '' : spotLabel(s);
+    if (!S.loading && s.lat != null) spot = `<button class="spotline${label ? ' set' : ''}" data-act="setspot">${ICON.pin}<span>${label ? esc(label) : 'Set my spot'}</span></button>`;
     star = `<button class="star" data-act="star" aria-label="${isFav ? 'Remove from saved rivers' : 'Save river'}">${isFav ? '★' : '☆'}</button>`;
   }
   return `<div class="selbar"><span class="ck" aria-hidden="true">✓</span>
-    <div class="selname"><b>${esc(name)}</b><div class="small muted">${sub}</div></div>
+    <div class="selname"><b>${esc(name)}</b><div class="small muted">${sub}</div>${spot}</div>
     ${star}${S.manual ? '' : `<button class="star" data-act="shareriver" aria-label="Share this river">${ICON.share}</button>`}<button class="selchange" data-act="change">Change</button></div>`;
 }
 
@@ -937,11 +1161,10 @@ function viewSpot() {
   const colorRisk = (['high', 'very high'].includes(band) && trend === 'rising') || (o && (o.water || []).includes('rain'));
   const changed = ov.band || ov.trend || cl.at || offStream;
   const gaugeRows = site ? `
-    ${viewWhereAmI(loc, cl)}
     <label class="field">Flow vs normal ${info('flow')} ${band ? tag('band') : ''}</label>${flowChips('band', Object.entries(FLOW_LABEL), band)}
     ${offStream && !band ? '<p class="hint-line">You\'re on a different stream from the gauge. Tap the flow that matches what you see.</p>' : ''}
     <label class="field">Trend ${info('trend')} ${trend ? tag('trend') : ''}</label>${flowChips('trend', Object.entries(TREND_LABEL), trend)}
-    ${changed ? '<p class="small" style="margin:-4px 0 8px"><button class="linkish" data-act="usegauge">Use gauge values</button></p>' : ''}` : '';
+    ${changed ? '<p class="small" style="margin:-4px 0 8px"><button class="linkish" data-act="usegauge">Use gauge values</button> · <button class="linkish" data-act="setspot">Change my spot</button></p>' : ''}` : '';
   return `<details class="card spot" ${keep('spot', !S.hadSession)}>
     <summary><span class="spot-k">Your spot</span><span class="spot-v">${esc(summary)}${seen ? `<span class="obs-line">👀 ${esc(seen)} · ${ago(o.at)}</span>` : ''}</span><span class="spot-edit">Change</span></summary>
     ${viewObserve(o)}
@@ -956,37 +1179,6 @@ function viewSpot() {
     <input type="number" inputmode="decimal" placeholder="${esc(`${tempText} now. Type your thermometer reading (${unitOf('temp')})`)}"
       value="${i.tempOverride !== '' ? val('temp', +i.tempOverride, t.entered || 'us') : ''}" data-in="tempOverride">
   </details>`;
-}
-
-// One line on what your location changed in the score and setups.
-function locEffect(loc, cl) {
-  if (cl && cl.at) return 'Score and setups use Claude\'s read of your spot (see below).';
-  if (loc.relation === 'other-stream' && !loc.useGauge) return 'Different stream: the gauge\'s flow isn\'t used for your score until you tap the flow you see.';
-  if (loc.relation === 'at') return 'Gauge readings apply as they are.';
-  return 'Same river: gauge readings still apply (flow vs normal carries along the river). Timing notes are in Reading the river.';
-}
-
-// Where you are relative to the gauge, plus the optional Claude refine.
-function viewWhereAmI(loc, cl) {
-  const place = (S.spotPlace || {})[S.site.id] || '';
-  const where = S.locBusy ? '<span class="spin"></span>Finding your spot on the river…'
-    : loc ? `<b>${esc(locText(loc))}</b> ${info('upstream')}` : 'The gauge may not be right where you are.';
-  return `<div class="whereami">
-    <div class="wa-top"><span class="wa-ico" aria-hidden="true">${ICON.pin}</span><span class="wa-text">${where}</span>
-      <button class="linkish small" data-act="whereami">${loc ? 'Update' : 'Where am I?'}</button></div>
-    ${loc && !S.locBusy ? `<p class="small muted" style="margin:6px 0 0">${esc(locEffect(loc, cl))}</p>` : ''}
-    ${cl.at ? `<p class="small" style="margin:6px 0 0">💬 Adjusted by Claude${cl.place ? ` for ${esc(cl.place)}` : ''} ${ago(cl.at)}${cl.confidence ? ` (${esc(cl.confidence)} confidence)` : ''}${cl.note ? `: ${esc(cl.note)}` : ''}</p>` : ''}
-    <details class="more" ${S.spotPasteOpen ? 'open' : ''}><summary class="small">Refine my spot with Claude</summary>
-      <p class="small muted" style="margin-top:0">Claude looks at tributaries, springs and dams between your spot and the gauge, then suggests flow, temp and clarity for it.</p>
-      <label class="field small" for="spotplace">1. Where are you fishing?</label>
-      <input type="text" id="spotplace" value="${esc(place)}" placeholder="e.g. Barothy Lodge, or Green Cottage access" autocomplete="off">
-      <p class="small muted" style="margin:4px 0 8px">${S.gps ? 'Leave blank to use your phone\'s location.' : 'Type a place, or tap <b>Where am I?</b> above to use your phone\'s location.'}</p>
-      <label class="field small">2. Ask Claude</label>
-      <button style="width:100%" data-act="spotask">${ICON.chat} Ask Claude about this spot ↗</button>
-      <label class="field small" style="margin-top:10px">3. Copy Claude's whole answer, then paste it here</label>
-      <textarea id="spotpaste" style="min-height:70px" placeholder="Claude's answer goes here (not your location)"></textarea>
-      <div class="btn-row" style="margin-top:8px"><button data-act="spotclip">${ICON.paste} Paste from clipboard</button><button data-act="spotsave">Apply to my spot</button></div></details>
-  </div>`;
 }
 
 // "What are you seeing?" chips. Likely hatches for today come first among the bugs.
@@ -2036,7 +2228,7 @@ $app.addEventListener('click', async (e) => {
     store.set('spotClaude', S.spotClaude);
     rerender();
   }
-  else if (act === 'whereami') whereAmI(true);
+  else if (act === 'setspot') openSpotSheet();
   else if (act === 'shareriver') shareRiver();
   else if (act === 'sharesetup') {
     const r = lastResult || recommend(currentConditions(), S.kb, S.gear, S.catches);
@@ -2044,24 +2236,6 @@ $app.addEventListener('click', async (e) => {
     if (s) shareIt({ title: s.title, text: setupText(s), url: S.site ? `${APP_URL}?site=${S.site.id}` : APP_URL });
   }
   else if (act === 'sharecatch') shareCatch(S.catches[+b.dataset.k]);
-  else if (act === 'spotask') {
-    const place = ((S.spotPlace || {})[S.site.id] || '').trim();
-    if (!place && !S.gps) { toast('Type where you\'re fishing in step 1, or tap Where am I? to use your phone\'s location.'); const p = document.getElementById('spotplace'); if (p) p.focus(); return; }
-    S.spotAskedPlace = place;
-    const prompt = buildSpotPrompt();
-    copyText(prompt);
-    window.open(CLAUDE_NEW + encodeURIComponent(prompt), '_blank');
-    S.spotPasteOpen = true;
-    toast('Opening Claude… When it answers, copy the whole reply and come back to paste it.');
-  }
-  else if (act === 'spotclip') {
-    try {
-      const t = await navigator.clipboard.readText();
-      document.getElementById('spotpaste').value = t;
-      if (t.trim()) saveSpotText(t); else toast('The clipboard is empty. Copy Claude\'s answer first.');
-    } catch (e) { toast('Long-press the box and choose Paste, then tap Apply.'); }
-  }
-  else if (act === 'spotsave') saveSpotText(document.getElementById('spotpaste').value);
   else if (act === 'learn') openLearn(b.dataset.id);
   else if (act === 'setunits') {
     S.gear.units = b.dataset.v; setUnitMode(b.dataset.v);
@@ -2225,10 +2399,6 @@ $app.addEventListener('input', (e) => {
   } else if (el.dataset.rivernotes !== undefined) {
     S.riverNotes[el.dataset.rivernotes] = el.value;
     store.set('rivernotes', S.riverNotes);
-  } else if (el.id === 'spotplace') {
-    S.spotPlace = { ...(S.spotPlace || {}), [S.site.id]: el.value };
-    S.spotPasteOpen = true;
-    store.set('spotPlace', S.spotPlace);
   } else if (el.id === 'askq') {
     S.askQ = el.value;
   } else if (el.dataset.gear === 'minScore') {

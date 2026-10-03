@@ -27,7 +27,7 @@ The first time you tap **Find gauges near me**, allow location access.
 5. **Gear tab:** your rods, fly box and fly box photos.
 6. **More tab:** units (US, Metric or As captured), **Learn** (plain-English explanations of lines, flies, knots and conditions), and your minimum score.
 
-**Where am I?** In Your spot, tap **Where am I?**. The app uses the free USGS river network to tell whether you're upstream or downstream of the gauge, or on a different stream, and adjusts for that. **Refine my spot with Claude** asks Claude about tributaries, springs and dams in between. Paste its answer back to adjust flow, temperature and clarity.
+**Set my spot:** under the river name, tap **Set my spot**. Use your phone's location, or type a place (looked up on the free OpenStreetMap search). The app uses the free USGS river network to tell whether you're upstream or downstream of the gauge, or on a different stream. If the map doesn't know the place, **Ask Claude to place it**. **Get local detail from Claude** asks about tributaries, springs and dams in between; paste its answer back and you'll see what changed in flow, temperature, clarity and score, with an Undo.
 
 **Share:** use the share button next to the ★ (river), on any setup, or on a catch in your log. A shared river link opens that river straight away in Fly Buddy.
 

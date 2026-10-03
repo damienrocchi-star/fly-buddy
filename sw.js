@@ -1,10 +1,10 @@
 // Offline support: keep a copy of the app on the phone.
 // With signal, always load the latest version (so updates show up straight away).
 // Offline or on a very slow connection, use the saved copy.
-const CACHE = 'fly-buddy-v15';
+const CACHE = 'fly-buddy-v16';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'store.js', 'units.js', 'icons.js', 'manifest.json',
-  'data/usgs.js', 'data/weather.js', 'data/noaa.js', 'data/nldi.js', 'engine/recommend.js', 'engine/rigging.js', 'engine/rating.js',
+  'data/usgs.js', 'data/weather.js', 'data/noaa.js', 'data/nldi.js', 'data/places.js', 'engine/recommend.js', 'engine/rigging.js', 'engine/rating.js',
   'knowledge/hatches.json', 'knowledge/flies.json', 'knowledge/steelhead.json', 'knowledge/rating.json', 'knowledge/rivers.json', 'knowledge/salmon.json', 'knowledge/report-signals.json', 'engine/report-signals.js', 'knowledge/learn.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-180.png',
 ];
