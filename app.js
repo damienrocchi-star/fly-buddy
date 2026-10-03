@@ -10,7 +10,7 @@ import { extractSignals, observationSignals, mergeSignals, OBS_MAX_AGE_MS } from
 import { findNoaaGauge, getFlowForecast } from './data/noaa.js';
 import { fmt, val, unitOf, fromInput, localize, setUnitMode, unitMode, UNIT_MODES } from './units.js';
 
-const APP_VERSION = '14'; // keep in step with CACHE in sw.js
+const APP_VERSION = '15'; // keep in step with CACHE in sw.js
 const $app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -445,7 +445,10 @@ function buildSpotPrompt() {
   L.push("I'm fly fishing and my app reads conditions from a USGS gauge that isn't exactly where I'm standing. Please estimate how conditions at my spot differ from the gauge.");
   L.push('');
   L.push(`- Gauge: ${site.name} (USGS ${site.id}) at ${site.lat.toFixed(4)}, ${site.lon.toFixed(4)}`);
-  if (S.gps) L.push(`- My location: ${S.gps.lat.toFixed(4)}, ${S.gps.lon.toFixed(4)}${loc ? ` (${locText(loc).replace("You're", 'I am')}, by the USGS river network)` : ''}`);
+  const place = ((S.spotPlace || {})[site.id] || '').trim();
+  // A place you typed wins over the phone's location (you may be planning from home).
+  if (place) L.push(`- My spot: ${place} (on or near the ${site.name.replace(/,?\s*[A-Z]{2}$/, '').split(/\s+(?:at|near|nr|below|above)\s+/i)[0]}${stateOf(site.name) ? `, ${stateOf(site.name)}` : ''}). Please work out where that is on the river.`);
+  else if (S.gps) L.push(`- My location: ${S.gps.lat.toFixed(4)}, ${S.gps.lon.toFixed(4)}${loc ? ` (${locText(loc).replace("You're", 'I am')}, by the USGS river network)` : ''}`);
   if (site.cfs != null) L.push(`- Gauge flow: ${Math.round(site.cfs)} cfs${S.flow ? `, ${S.flow.band} (${S.flow.pct}% of normal for today)` : ''}${site.trend ? `, ${site.trend}` : ''}`);
   L.push(`- Water temp: ${c.waterTempF != null ? `${c.waterTempF}°F (${c.tempSource || 'estimated'})` : 'not measured'}`);
   if (S.wx) L.push(`- Weather: ${S.wx.airF}°F air, ${codeText(S.wx.code).toLowerCase()}`);
@@ -485,9 +488,19 @@ function parseSpot(text) {
 
 async function saveSpotText(text) {
   const r = parseSpot(text);
-  if (!r) { toast("Couldn't find the FLYBUDDY-SPOT block. Copy Claude's whole answer and paste it again."); return; }
   const id = S.site.id;
-  S.spotClaude[id] = { ...r, at: Date.now() };
+  if (!r) {
+    const typed = String(text || '').trim();
+    // A short line with no block is almost certainly a place name typed into the wrong box.
+    if (typed && typed.length < 120 && !/FLYBUDDY/i.test(typed)) {
+      S.spotPlace = { ...(S.spotPlace || {}), [id]: typed }; store.set('spotPlace', S.spotPlace);
+      S.spotPasteOpen = true; rerender();
+      toast(`"${typed.slice(0, 40)}" looks like a place, so I've put it in step 1. Now tap Ask Claude.`);
+    } else toast(typed ? "That doesn't include Claude's FLYBUDDY-SPOT block. In Claude, tap Copy under the whole answer and paste again." : 'Paste Claude\'s answer into the box first.');
+    return;
+  }
+  const askedPlace = (S.spotAskedPlace != null ? S.spotAskedPlace : (S.spotPlace || {})[id] || '').trim();
+  S.spotClaude[id] = { ...r, place: askedPlace || null, at: Date.now() };
   if (r.clarity) { S.inputs.clarity = r.clarity; saveSession(); }
   // Claude's read replaces your earlier chip choices for flow and trend.
   delete S.spotOverride[id];
@@ -955,18 +968,24 @@ function locEffect(loc, cl) {
 
 // Where you are relative to the gauge, plus the optional Claude refine.
 function viewWhereAmI(loc, cl) {
+  const place = (S.spotPlace || {})[S.site.id] || '';
   const where = S.locBusy ? '<span class="spin"></span>Finding your spot on the river…'
     : loc ? `<b>${esc(locText(loc))}</b> ${info('upstream')}` : 'The gauge may not be right where you are.';
   return `<div class="whereami">
     <div class="wa-top"><span class="wa-ico" aria-hidden="true">${ICON.pin}</span><span class="wa-text">${where}</span>
       <button class="linkish small" data-act="whereami">${loc ? 'Update' : 'Where am I?'}</button></div>
     ${loc && !S.locBusy ? `<p class="small muted" style="margin:6px 0 0">${esc(locEffect(loc, cl))}</p>` : ''}
-    ${cl.at ? `<p class="small" style="margin:6px 0 0">💬 Adjusted by Claude ${ago(cl.at)}${cl.confidence ? ` (${esc(cl.confidence)} confidence)` : ''}${cl.note ? `: ${esc(cl.note)}` : ''}</p>` : ''}
+    ${cl.at ? `<p class="small" style="margin:6px 0 0">💬 Adjusted by Claude${cl.place ? ` for ${esc(cl.place)}` : ''} ${ago(cl.at)}${cl.confidence ? ` (${esc(cl.confidence)} confidence)` : ''}${cl.note ? `: ${esc(cl.note)}` : ''}</p>` : ''}
     <details class="more" ${S.spotPasteOpen ? 'open' : ''}><summary class="small">Refine my spot with Claude</summary>
-      <p class="small muted" style="margin-top:0">Claude looks at tributaries, springs and dams between you and the gauge, then suggests flow, temp and clarity for your spot. Copy its whole answer and paste it here.</p>
-      <div class="btn-row"><button data-act="spotask">${ICON.chat} Ask Claude ↗</button><button data-act="spotclip">${ICON.paste} Paste answer</button></div>
-      <textarea id="spotpaste" style="min-height:70px;margin-top:8px" placeholder="Or paste Claude's answer here"></textarea>
-      <button style="width:100%;margin-top:8px" data-act="spotsave">Apply to my spot</button></details>
+      <p class="small muted" style="margin-top:0">Claude looks at tributaries, springs and dams between your spot and the gauge, then suggests flow, temp and clarity for it.</p>
+      <label class="field small" for="spotplace">1. Where are you fishing?</label>
+      <input type="text" id="spotplace" value="${esc(place)}" placeholder="e.g. Barothy Lodge, or Green Cottage access" autocomplete="off">
+      <p class="small muted" style="margin:4px 0 8px">${S.gps ? 'Leave blank to use your phone\'s location.' : 'Type a place, or tap <b>Where am I?</b> above to use your phone\'s location.'}</p>
+      <label class="field small">2. Ask Claude</label>
+      <button style="width:100%" data-act="spotask">${ICON.chat} Ask Claude about this spot ↗</button>
+      <label class="field small" style="margin-top:10px">3. Copy Claude's whole answer, then paste it here</label>
+      <textarea id="spotpaste" style="min-height:70px" placeholder="Claude's answer goes here (not your location)"></textarea>
+      <div class="btn-row" style="margin-top:8px"><button data-act="spotclip">${ICON.paste} Paste from clipboard</button><button data-act="spotsave">Apply to my spot</button></div></details>
   </div>`;
 }
 
@@ -2026,6 +2045,9 @@ $app.addEventListener('click', async (e) => {
   }
   else if (act === 'sharecatch') shareCatch(S.catches[+b.dataset.k]);
   else if (act === 'spotask') {
+    const place = ((S.spotPlace || {})[S.site.id] || '').trim();
+    if (!place && !S.gps) { toast('Type where you\'re fishing in step 1, or tap Where am I? to use your phone\'s location.'); const p = document.getElementById('spotplace'); if (p) p.focus(); return; }
+    S.spotAskedPlace = place;
     const prompt = buildSpotPrompt();
     copyText(prompt);
     window.open(CLAUDE_NEW + encodeURIComponent(prompt), '_blank');
@@ -2203,6 +2225,10 @@ $app.addEventListener('input', (e) => {
   } else if (el.dataset.rivernotes !== undefined) {
     S.riverNotes[el.dataset.rivernotes] = el.value;
     store.set('rivernotes', S.riverNotes);
+  } else if (el.id === 'spotplace') {
+    S.spotPlace = { ...(S.spotPlace || {}), [S.site.id]: el.value };
+    S.spotPasteOpen = true;
+    store.set('spotPlace', S.spotPlace);
   } else if (el.id === 'askq') {
     S.askQ = el.value;
   } else if (el.dataset.gear === 'minScore') {
@@ -2276,6 +2302,7 @@ window.addEventListener('offline', render);
   S.tempEst = await store.get('tempEst', {});
   S.spotLoc = await store.get('spotLoc', {});
   S.spotClaude = await store.get('spotClaude', {});
+  S.spotPlace = await store.get('spotPlace', {});
   setUnitMode(S.gear.units);
   S.reports = await store.get('reports');
   loadReports().then(() => { if (S.tab === 'water' && !isPicking()) render(); });
