@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-10-05T19:44:50.394Z",
+ "fetchedAt": "2026-10-06T17:18:22.308Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: September 30, 2026",
@@ -568,6 +568,245 @@
       "eggs",
       "pink",
       "egg",
+      "dry"
+     ]
+    }
+   ]
+  },
+  "https://bettsguideservice.com/category/pere-marquette-river-fishing-report/": {
+   "name": "Betts Guide Service",
+   "feedUrl": "https://bettsguideservice.com/feed/",
+   "items": [
+    {
+     "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
+     "date": "2026-08-29T09:18:00.000Z",
+     "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
+     "excerpt": "Michigan King SALMON Fishing report Michigan DNR Fishing Reports for Manistee River. King Salmon Fishing Report Sept 4, 2025 Heavy winds and big rains the past two days have moved a lot of Salmon from Lake Michigan, into to the rivers. Cold nights have also helped bring in more fish. There is a…",
+     "terms": [
+      "surface",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "black",
+      "white",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
+     "date": "2026-08-04T12:01:51.000Z",
+     "url": "https://bettsguideservice.com/pere-marquette-river-salmon-fishing-report/",
+     "excerpt": "(8/26/26) Lower Pere Marquette River from Indian Bridge to Custer, Scottville is fishing well. Batches of Michigan King Salmon are moving through this section of river. New fish are entering the river daily. Fishing with floats and skein, (Salmon eggs Clusters) has been the best technique. Casting…",
+     "terms": [
+      "egg sucking leech",
+      "high water",
+      "streamers",
+      "stripping",
+      "hexagenia",
+      "nymphs",
+      "caddis",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "swing",
+      "black",
+      "white",
+      "eggs",
+      "bead"
+     ]
+    }
+   ]
+  },
+  "https://bettsguideservice.com/manistee-river-fishing-reports/": {
+   "name": "Betts Guide Service (Tippy Dam)",
+   "feedUrl": "https://bettsguideservice.com/feed/",
+   "items": [
+    {
+     "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
+     "date": "2026-08-29T09:18:00.000Z",
+     "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
+     "excerpt": "Michigan King SALMON Fishing report Michigan DNR Fishing Reports for Manistee River. King Salmon Fishing Report Sept 4, 2025 Heavy winds and big rains the past two days have moved a lot of Salmon from Lake Michigan, into to the rivers. Cold nights have also helped bring in more fish. There is a…",
+     "terms": [
+      "surface",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "black",
+      "white",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
+     "date": "2026-08-04T12:01:51.000Z",
+     "url": "https://bettsguideservice.com/pere-marquette-river-salmon-fishing-report/",
+     "excerpt": "(8/26/26) Lower Pere Marquette River from Indian Bridge to Custer, Scottville is fishing well. Batches of Michigan King Salmon are moving through this section of river. New fish are entering the river daily. Fishing with floats and skein, (Salmon eggs Clusters) has been the best technique. Casting…",
+     "terms": [
+      "egg sucking leech",
+      "high water",
+      "streamers",
+      "stripping",
+      "hexagenia",
+      "nymphs",
+      "caddis",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "swing",
+      "black",
+      "white",
+      "eggs",
+      "bead"
+     ]
+    }
+   ]
+  },
+  "https://bettsguideservice.com/muskegon-river-fishing-report/": {
+   "name": "Betts Guide Service",
+   "feedUrl": "https://bettsguideservice.com/feed/",
+   "items": [
+    {
+     "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
+     "date": "2026-08-29T09:18:00.000Z",
+     "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
+     "excerpt": "Michigan King SALMON Fishing report Michigan DNR Fishing Reports for Manistee River. King Salmon Fishing Report Sept 4, 2025 Heavy winds and big rains the past two days have moved a lot of Salmon from Lake Michigan, into to the rivers. Cold nights have also helped bring in more fish. There is a…",
+     "terms": [
+      "surface",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "black",
+      "white",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
+     "date": "2026-08-04T12:01:51.000Z",
+     "url": "https://bettsguideservice.com/pere-marquette-river-salmon-fishing-report/",
+     "excerpt": "(8/26/26) Lower Pere Marquette River from Indian Bridge to Custer, Scottville is fishing well. Batches of Michigan King Salmon are moving through this section of river. New fish are entering the river daily. Fishing with floats and skein, (Salmon eggs Clusters) has been the best technique. Casting…",
+     "terms": [
+      "egg sucking leech",
+      "high water",
+      "streamers",
+      "stripping",
+      "hexagenia",
+      "nymphs",
+      "caddis",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "swing",
+      "black",
+      "white",
+      "eggs",
+      "bead"
+     ]
+    }
+   ]
+  },
+  "https://gateslodge.com/category/fishing-report/feed/": {
+   "name": "Gates Au Sable Lodge",
+   "feedUrl": "https://gateslodge.com/category/fishing-report/feed/",
+   "items": [
+    {
+     "title": "So Sweet",
+     "date": "2026-10-01T14:19:56.000Z",
+     "url": "https://gateslodge.com/2026/10/so-sweet/",
+     "excerpt": "I’m about to go fishing, and it’s going to be good. Two days of rain, rising river levels and the brown trout are in peak pre-spawn form. It’ll be medium…",
+     "terms": [
+      "soft hackles",
+      "streamers",
+      "streamer",
+      "swinging",
+      "dry fly",
+      "black",
+      "white",
+      "olive",
+      "cream",
+      "bwos",
+      "dry",
+      "tan"
+     ]
+    },
+    {
+     "title": "Fall is here",
+     "date": "2026-09-25T02:24:02.000Z",
+     "url": "https://gateslodge.com/2026/09/condensing/",
+     "excerpt": "The weather has been stunning, challenging, cold (in the mornings) and now a little warm during the day. We have more of it to come: A nice half-week of one…",
+     "terms": [
+      "soft hackles",
+      "soft hackle",
+      "streamer",
+      "swing",
+      "nymph",
+      "ants",
+      "dry",
+      "bwo",
+      "red"
+     ]
+    },
+    {
+     "title": "Rain Rain Rain",
+     "date": "2026-09-17T13:24:12.000Z",
+     "url": "https://gateslodge.com/2026/09/rain-rain-rain/",
+     "excerpt": "This has been the season of the rains. The rivers are moderately high across the river system but also fishing pretty well. The higher water opened the door to our…",
+     "terms": [
+      "moderately high",
+      "high water",
+      "streamers",
+      "rain rain",
+      "streamer",
+      "dries",
+      "ants",
+      "isos"
+     ]
+    },
+    {
+     "title": "Catchin’ Tigers",
+     "date": "2026-09-04T13:57:23.000Z",
+     "url": "https://gateslodge.com/2026/09/catchin-tigers/",
+     "excerpt": "Every few years, a tiger trout will pop up. Now some fisheries stock hatchery-forced tiger trout, but a wild one is a rare thing. We most commonly see them pop…",
+     "terms": [
+      "woolly bugger",
+      "fish rising",
+      "high water",
+      "streamers",
+      "streamer",
+      "dry fly",
+      "tricos",
+      "trico",
+      "ants",
+      "isos",
+      "dry"
+     ]
+    },
+    {
+     "title": "Ants, whiteflies, and fall isos",
+     "date": "2026-08-28T01:09:03.000Z",
+     "url": "https://gateslodge.com/2026/08/ants-whiteflies-and-fall-isos/",
+     "excerpt": "So much change in such a short timeframe. Let’s see: The flying ants are now a thing, and they’ll stay a thing through the first frosts of the season. On…",
+     "terms": [
+      "woolly bugger",
+      "soft hackles",
+      "streamers",
+      "streamer",
+      "swinging",
+      "dry fly",
+      "nymphs",
+      "tricos",
+      "dries",
+      "trico",
+      "white",
+      "ants",
+      "bwos",
+      "isos",
       "dry"
      ]
     }
