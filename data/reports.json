@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-10-06T17:18:22.308Z",
+ "fetchedAt": "2026-10-07T17:51:47.057Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: September 30, 2026",
@@ -427,6 +427,19 @@
    "feedUrl": "https://fishbaldwin.com/category/fishing-reports/feed/",
    "items": [
     {
+     "title": "October 6, 2026",
+     "date": "2026-10-06T21:37:38.000Z",
+     "url": "https://fishbaldwin.com/2026/10/06/october-6-2026/",
+     "excerpt": "! Hard to believe it is already October, but time flies when you are having fun! The trees are showing their cards and starting to turn & drop leaves. The kings are making their way home and fulfilling their main objective in life; returning to their natal waters to spawn.…",
+     "terms": [
+      "beads",
+      "spawn",
+      "eggs",
+      "egg",
+      "hex"
+     ]
+    },
+    {
      "title": "October 5th, 2026",
      "date": "2026-10-05T08:55:50.000Z",
      "url": "https://fishbaldwin.com/2026/10/05/october-5th-2026/",
@@ -462,19 +475,6 @@
       "low and clear",
       "beads",
       "spawn"
-     ]
-    },
-    {
-     "title": "September 15, 2026",
-     "date": "2026-09-15T23:00:45.000Z",
-     "url": "https://fishbaldwin.com/2026/09/15/september-15-2026/",
-     "excerpt": "It’s been a great start to the fall season! There are kings scattered throughout the system and piling up in certain areas. The river IS low and clear (for the time being…they are forecasting up to 2 inches of rain over the watershed over the next few days, but…",
-     "terms": [
-      "low and clear",
-      "heavy rain",
-      "beads",
-      "spawn",
-      "pink"
      ]
     }
    ]
