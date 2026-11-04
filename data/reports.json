@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-11-01T17:11:22.191Z",
+ "fetchedAt": "2026-11-04T18:43:28.101Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: October 28, 2026",
@@ -362,6 +362,21 @@
    "feedUrl": "https://fishbaldwin.com/category/fishing-reports/feed/",
    "items": [
     {
+     "title": "November 3, 2026",
+     "date": "2026-11-03T23:14:39.000Z",
+     "url": "https://fishbaldwin.com/2026/11/03/november-3-2026/",
+     "excerpt": "First and foremost, I want to thank everyone who cared enough to attend and participate in the river clean-up! It was a huge success and a ton of fun! Beautiful weather for “heavy lifting and yard work”…It’s nice to gather with people willing to donate their time and efforts to help maintain our…",
+     "terms": [
+      "clear water",
+      "streamers",
+      "stripping",
+      "low water",
+      "streamer",
+      "beads",
+      "bead"
+     ]
+    },
+    {
      "title": "October 28, 2026",
      "date": "2026-10-28T21:32:48.000Z",
      "url": "https://fishbaldwin.com/2026/10/28/october-28-2026/",
@@ -410,13 +425,6 @@
       "egg",
       "hex"
      ]
-    },
-    {
-     "title": "October 5th, 2026",
-     "date": "2026-10-05T08:55:50.000Z",
-     "url": "https://fishbaldwin.com/2026/10/05/october-5th-2026/",
-     "excerpt": "Hey guys, save the date! On Saturday, October 24th 2026 we will be holding our 30th annual Fall River Cleanup! (59th in total if you add in all the springs. 👍) More details to follow but it is helpful to have a rough estimate of participants in planning the dinner and appreciation party afterwards…",
-     "terms": []
     }
    ]
   },
