@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-11-13T18:36:06.227Z",
+ "fetchedAt": "2026-11-14T17:13:21.791Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: November 4, 2026",
@@ -381,6 +381,230 @@
       "pink",
       "egg",
       "dry"
+     ]
+    }
+   ]
+  },
+  "https://bettsguideservice.com/category/pere-marquette-river-fishing-report/": {
+   "name": "Betts Guide Service",
+   "feedUrl": "https://bettsguideservice.com/feed/",
+   "items": [
+    {
+     "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
+     "date": "2026-08-29T09:18:00.000Z",
+     "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
+     "excerpt": "Michigan King SALMON Fishing report Michigan DNR Fishing Reports for Manistee River. King Salmon Fishing Report Sept 4, 2025 Heavy winds and big rains the past two days have moved a lot of Salmon from Lake Michigan, into to the rivers. Cold nights have also helped bring in more fish. There is a…",
+     "terms": [
+      "surface",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "black",
+      "white",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
+     "date": "2026-08-04T12:01:51.000Z",
+     "url": "https://bettsguideservice.com/pere-marquette-river-salmon-fishing-report/",
+     "excerpt": "(8/26/26) Lower Pere Marquette River from Indian Bridge to Custer, Scottville is fishing well. Batches of Michigan King Salmon are moving through this section of river. New fish are entering the river daily. Fishing with floats and skein, (Salmon eggs Clusters) has been the best technique. Casting…",
+     "terms": [
+      "egg sucking leech",
+      "high water",
+      "streamers",
+      "stripping",
+      "hexagenia",
+      "nymphs",
+      "caddis",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "swing",
+      "black",
+      "white",
+      "eggs",
+      "bead"
+     ]
+    }
+   ]
+  },
+  "https://bettsguideservice.com/manistee-river-fishing-reports/": {
+   "name": "Betts Guide Service (Tippy Dam)",
+   "feedUrl": "https://bettsguideservice.com/feed/",
+   "items": [
+    {
+     "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
+     "date": "2026-08-29T09:18:00.000Z",
+     "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
+     "excerpt": "Michigan King SALMON Fishing report Michigan DNR Fishing Reports for Manistee River. King Salmon Fishing Report Sept 4, 2025 Heavy winds and big rains the past two days have moved a lot of Salmon from Lake Michigan, into to the rivers. Cold nights have also helped bring in more fish. There is a…",
+     "terms": [
+      "surface",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "black",
+      "white",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
+     "date": "2026-08-04T12:01:51.000Z",
+     "url": "https://bettsguideservice.com/pere-marquette-river-salmon-fishing-report/",
+     "excerpt": "(8/26/26) Lower Pere Marquette River from Indian Bridge to Custer, Scottville is fishing well. Batches of Michigan King Salmon are moving through this section of river. New fish are entering the river daily. Fishing with floats and skein, (Salmon eggs Clusters) has been the best technique. Casting…",
+     "terms": [
+      "egg sucking leech",
+      "high water",
+      "streamers",
+      "stripping",
+      "hexagenia",
+      "nymphs",
+      "caddis",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "swing",
+      "black",
+      "white",
+      "eggs",
+      "bead"
+     ]
+    }
+   ]
+  },
+  "https://bettsguideservice.com/muskegon-river-fishing-report/": {
+   "name": "Betts Guide Service",
+   "feedUrl": "https://bettsguideservice.com/feed/",
+   "items": [
+    {
+     "title": "Michigan Weekly DNR Fishing Reports for Salmon and Steelhead – Manistee River – Manistee River (231) 519-7348",
+     "date": "2026-08-29T09:18:00.000Z",
+     "url": "https://bettsguideservice.com/michigan-weekly-dnr-fishing-reports-for-salmon/",
+     "excerpt": "Michigan King SALMON Fishing report Michigan DNR Fishing Reports for Manistee River. King Salmon Fishing Report Sept 4, 2025 Heavy winds and big rains the past two days have moved a lot of Salmon from Lake Michigan, into to the rivers. Cold nights have also helped bring in more fish. There is a…",
+     "terms": [
+      "surface",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "black",
+      "white",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Pere Marquette River Salmon Fishing Report – (231) 519-7348",
+     "date": "2026-08-04T12:01:51.000Z",
+     "url": "https://bettsguideservice.com/pere-marquette-river-salmon-fishing-report/",
+     "excerpt": "(8/26/26) Lower Pere Marquette River from Indian Bridge to Custer, Scottville is fishing well. Batches of Michigan King Salmon are moving through this section of river. New fish are entering the river daily. Fishing with floats and skein, (Salmon eggs Clusters) has been the best technique. Casting…",
+     "terms": [
+      "egg sucking leech",
+      "high water",
+      "streamers",
+      "stripping",
+      "hexagenia",
+      "nymphs",
+      "caddis",
+      "orange",
+      "beads",
+      "spawn",
+      "skein",
+      "swing",
+      "black",
+      "white",
+      "eggs",
+      "bead"
+     ]
+    }
+   ]
+  },
+  "https://gateslodge.com/category/fishing-report/feed/": {
+   "name": "Gates Au Sable Lodge",
+   "feedUrl": "https://gateslodge.com/category/fishing-report/feed/",
+   "items": [
+    {
+     "title": "November…Rain, Snow, Sleet",
+     "date": "2026-11-12T16:23:55.000Z",
+     "url": "https://gateslodge.com/2026/11/november-rain-snow-sleet/",
+     "excerpt": "Matt Pittman has been fishing — and catching. It’s been great streamer fishing for post-spawn trout and I thought we all could use a few pics. The overnight rain is about…",
+     "terms": [
+      "chartreuse",
+      "stripping",
+      "streamer",
+      "dry fly",
+      "nymphs",
+      "orange",
+      "black",
+      "white",
+      "olive",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Offseason",
+     "date": "2026-11-05T00:29:47.000Z",
+     "url": "https://gateslodge.com/2026/11/offseason/",
+     "excerpt": "For us in the fly shop, nothing is quite as quiet as the first three weeks of November. It’s just…there’s a lot going on besides trout in a river. Sports…",
+     "terms": [
+      "streamers",
+      "nymphs",
+      "spawn",
+      "black",
+      "eggs"
+     ]
+    },
+    {
+     "title": "Rain and Shine",
+     "date": "2026-10-22T14:31:39.000Z",
+     "url": "https://gateslodge.com/2026/10/rain-and-shine/",
+     "excerpt": "Used Rods and Reels: List at end of this Fishing Report! Yeah, it’s better on the rainy days. This week has been beautiful [read: tough fishing] in a way that…",
+     "terms": [
+      "streamers",
+      "dry fly",
+      "bugger",
+      "nymphs",
+      "spawn",
+      "nymph",
+      "black",
+      "bwos"
+     ]
+    },
+    {
+     "title": "Change",
+     "date": "2026-10-15T13:20:14.000Z",
+     "url": "https://gateslodge.com/2026/10/change-2/",
+     "excerpt": "The next month hosts perhaps the greatest one month change of the season. We go from leaves to sticks, from pre-spawn to post-spawn, from birds everywhere to nothing but some…",
+     "terms": [
+      "soft hackles",
+      "streamers",
+      "streamer",
+      "dry fly",
+      "stained",
+      "olives",
+      "spawn",
+      "nymph",
+      "black",
+      "eggs",
+      "egg"
+     ]
+    },
+    {
+     "title": "Fickle",
+     "date": "2026-10-09T01:22:06.000Z",
+     "url": "https://gateslodge.com/2026/10/fickle/",
+     "excerpt": "Every fall, sometime around the first clear-skied cold snap, the Au Sable reminds me just how fickle it can be. The water turns to crystal, the trout become skittish, and…",
+     "terms": [
+      "fish rising",
+      "streamers",
+      "streamer",
+      "spawn",
+      "nymph",
+      "bwos"
      ]
     }
    ]
