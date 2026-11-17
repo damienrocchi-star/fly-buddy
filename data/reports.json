@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-11-14T17:13:21.791Z",
+ "fetchedAt": "2026-11-17T19:55:57.647Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: November 4, 2026",
@@ -222,6 +222,15 @@
    "feedUrl": "https://fishbaldwin.com/category/fishing-reports/feed/",
    "items": [
     {
+     "title": "November 16, 2026",
+     "date": "2026-11-16T22:05:04.000Z",
+     "url": "https://fishbaldwin.com/2026/11/16/november-16-2026/",
+     "excerpt": "Hey guys, just a quick check-in from me today to let you know that I am still kicking and to post a few pics that I actually took and haven’t… John has continued to do his reports on a very regular basis, so I don’t have much to add to what’s already been said. Conditions…",
+     "terms": [
+      "low and clear"
+     ]
+    },
+    {
      "title": "November 10, 2026",
      "date": "2026-11-10T22:47:31.000Z",
      "url": "https://fishbaldwin.com/2026/11/10/november-10-2026/",
@@ -278,15 +287,6 @@
       "streamer",
       "beads",
       "bead"
-     ]
-    },
-    {
-     "title": "October 13, 2026",
-     "date": "2026-10-13T10:12:41.000Z",
-     "url": "https://fishbaldwin.com/2026/10/13/october-13-2026/",
-     "excerpt": "New Shop Hours 8am – 6pm Daily Save the date – The Fall River Clean-Up will be Saturday – October 24…Please reach out to the shop (231-745-3529) ahead of time to let us know if you are planning on attending…it’s nice to have a “ballpark” headcount to prepare for the BBQ appreciation dinner. 9am at…",
-     "terms": [
-      "low and clear"
      ]
     }
    ]
