@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-11-17T19:55:57.647Z",
+ "fetchedAt": "2026-11-19T19:31:47.126Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: November 4, 2026",
@@ -296,6 +296,22 @@
    "feedUrl": "https://nomadanglers.com/blogs/michigan-fishing-report.atom",
    "items": [
     {
+     "title": "November 19th, 2026",
+     "date": "2026-11-19T18:16:24.000Z",
+     "url": "https://nomadanglers.com/blogs/michigan-fishing-report/november-19th-2026",
+     "excerpt": "Low water has made for a challenging fishing, but the opportunities for success are still there! More",
+     "terms": [
+      "clear water",
+      "streamers",
+      "low flows",
+      "streamer",
+      "nymphing",
+      "spawn",
+      "swing",
+      "euro"
+     ]
+    },
+    {
      "title": "September 10th, 2026",
      "date": "2026-09-10T17:58:05.000Z",
      "url": "https://nomadanglers.com/blogs/michigan-fishing-report/september-10th-2026",
@@ -356,31 +372,6 @@
       "caddis",
       "swing",
       "olive"
-     ]
-    },
-    {
-     "title": "April 2nd 2026",
-     "date": "2026-04-02T18:05:16.000Z",
-     "url": "https://nomadanglers.com/blogs/michigan-fishing-report/april-1st-2026-river-report",
-     "excerpt": "Spring is here and so are the fish. Warmer temperatures and a bump in river levels have pushed a lot of fish up the river systems. Most of our rivers have just returned to normal levels or slightly higher than normal depending on where you are at. There is rain in the forecast so I would expect…",
-     "terms": [
-      "stoneflies",
-      "high water",
-      "streamers",
-      "stripping",
-      "streamer",
-      "swinging",
-      "nymphing",
-      "stonefly",
-      "surface",
-      "orange",
-      "swing",
-      "dries",
-      "black",
-      "eggs",
-      "pink",
-      "egg",
-      "dry"
      ]
     }
    ]
@@ -528,6 +519,19 @@
    "feedUrl": "https://gateslodge.com/category/fishing-report/feed/",
    "items": [
     {
+     "title": "The Fourth Season",
+     "date": "2026-11-19T17:04:04.000Z",
+     "url": "https://gateslodge.com/2026/11/the-fourth-season-2/",
+     "excerpt": "It was sometime last week when a fellow came walking under my bow stand shouldering fifty pounds of sugar beets that I knew I was ready to go fly fishing.…",
+     "terms": [
+      "streamers",
+      "nymphs",
+      "beads",
+      "nymph",
+      "dry"
+     ]
+    },
+    {
      "title": "November…Rain, Snow, Sleet",
      "date": "2026-11-12T16:23:55.000Z",
      "url": "https://gateslodge.com/2026/11/november-rain-snow-sleet/",
@@ -591,20 +595,6 @@
       "black",
       "eggs",
       "egg"
-     ]
-    },
-    {
-     "title": "Fickle",
-     "date": "2026-10-09T01:22:06.000Z",
-     "url": "https://gateslodge.com/2026/10/fickle/",
-     "excerpt": "Every fall, sometime around the first clear-skied cold snap, the Au Sable reminds me just how fickle it can be. The water turns to crystal, the trout become skittish, and…",
-     "terms": [
-      "fish rising",
-      "streamers",
-      "streamer",
-      "spawn",
-      "nymph",
-      "bwos"
      ]
     }
    ]
