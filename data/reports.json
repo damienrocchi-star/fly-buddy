@@ -1,5 +1,5 @@
 {
- "fetchedAt": "2026-11-25T20:31:17.343Z",
+ "fetchedAt": "2026-11-27T20:03:45.897Z",
  "dnr": [
   {
    "title": "Weekly Fishing Report: November 4, 2026",
@@ -523,6 +523,24 @@
    "feedUrl": "https://gateslodge.com/category/fishing-report/feed/",
    "items": [
     {
+     "title": "The Lucky Hat",
+     "date": "2026-11-27T14:40:30.000Z",
+     "url": "https://gateslodge.com/2026/11/the-lucky-hat/",
+     "excerpt": "2026 Holiday Catalog is LIVE…and now we have links in the catalog! Yep, we are really at the technological forefront! You can click an item in the catalog and go directly…",
+     "terms": [
+      "chartreuse",
+      "streamers",
+      "streamer",
+      "surface",
+      "nymphs",
+      "nymph",
+      "black",
+      "olive",
+      "egg",
+      "tan"
+     ]
+    },
+    {
      "title": "The Fourth Season",
      "date": "2026-11-19T17:04:04.000Z",
      "url": "https://gateslodge.com/2026/11/the-fourth-season-2/",
@@ -580,25 +598,6 @@
       "nymph",
       "black",
       "bwos"
-     ]
-    },
-    {
-     "title": "Change",
-     "date": "2026-10-15T13:20:14.000Z",
-     "url": "https://gateslodge.com/2026/10/change-2/",
-     "excerpt": "The next month hosts perhaps the greatest one month change of the season. We go from leaves to sticks, from pre-spawn to post-spawn, from birds everywhere to nothing but some…",
-     "terms": [
-      "soft hackles",
-      "streamers",
-      "streamer",
-      "dry fly",
-      "stained",
-      "olives",
-      "spawn",
-      "nymph",
-      "black",
-      "eggs",
-      "egg"
      ]
     }
    ]
